@@ -109,7 +109,6 @@ namespace dnd_game.infrastructure.security
         /// <inheritdoc />
         public async Task<AuthResult> RegisterAsync(AuthRequest request, CancellationToken cancellationToken = default)
         {
-            // Валидация входных данных
             ArgumentNullException.ThrowIfNull(request);
             if (string.IsNullOrWhiteSpace(request.Username))
                 return Error("Имя пользователя не может быть пустым.");
@@ -117,6 +116,10 @@ namespace dnd_game.infrastructure.security
                 return Error("Email не может быть пустым.");
             if (string.IsNullOrWhiteSpace(request.Password))
                 return Error("Пароль не может быть пустым.");
+
+            // ✅ Добавленная проверка формата email
+            if (!System.Net.Mail.MailAddress.TryCreate(request.Email, out _))
+                return Error("Некорректный формат email.");
 
             var existingByUsername = await _userRepository.GetByUsernameAsync(request.Username);
             if (existingByUsername != null)

@@ -281,6 +281,7 @@ namespace dnd_game.infrastructure.common
     {
         private readonly ConcurrentDictionary<Guid, ISagaState> _states = new();
         private readonly ILogger<InMemorySagaStateRepository> _logger = logger ?? NullLogger<InMemorySagaStateRepository>.Instance;
+        private readonly object _lock = new();
 
         public Task<ISagaState?> LoadAsync(Guid id, CancellationToken cancellationToken = default)
         {
@@ -300,6 +301,28 @@ namespace dnd_game.infrastructure.common
             _states[state.SagaId] = state;
             _logger.LogDebug("Состояние саги {SagaId} сохранено", state.SagaId);
             return Task.CompletedTask;
+        }
+
+        public Task<bool> TrySaveAsync(ISagaState state, int expectedVersion, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            lock (_lock)
+            {
+                if (_states.TryGetValue(state.SagaId, out var existing))
+                {
+                    if (existing.Version != expectedVersion)
+                        return Task.FromResult(false);
+                }
+                else
+                {
+                    // Если состояния нет, а expectedVersion != 0, то конфликт
+                    if (expectedVersion != 0)
+                        return Task.FromResult(false);
+                }
+
+                _states[state.SagaId] = state;
+                return Task.FromResult(true);
+            }
         }
 
         public Task DeleteAsync(Guid id, CancellationToken cancellationToken = default)

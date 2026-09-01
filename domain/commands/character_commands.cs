@@ -17,6 +17,7 @@ namespace dnd_game.domain.commands
 
     /// <summary>Обновить основные данные персонажа (имя, максимальные хиты).</summary>
     public record UpdateCharacter(Guid CharacterId, string? Name, int? MaxHitPoints) : ICommand;
+    public record SetClassFeatureMaxUsesCommand(Guid CharacterId, string FeatureId, int MaxUses) : ICommand;
 
     // ---------- Временные хиты ----------
 

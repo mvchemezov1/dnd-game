@@ -89,6 +89,18 @@ namespace dnd_game.domain.events
         public Guid AggregateId => CharacterId;
     }
 
+    /// <summary>Персонаж вступил в бой.</summary>
+    public record CharacterEnteredCombat(Guid CharacterId, Guid CombatId) : ICharacterEvent
+    {
+        public Guid AggregateId => CharacterId;
+    }
+
+    /// <summary>Персонаж покинул бой.</summary>
+    public record CharacterLeftCombat(Guid CharacterId, Guid CombatId) : ICharacterEvent
+    {
+        public Guid AggregateId => CharacterId;
+    }
+
     // ---------- Временные хиты ----------
 
     /// <summary>Временные хиты установлены.</summary>
@@ -414,6 +426,15 @@ namespace dnd_game.domain.events
 
     /// <summary>Персонажу добавлена одна кость хитов указанного типа.</summary>
     public record HitDieAdded(Guid CharacterId, int HitDieType) : ICharacterEvent
+    {
+        public Guid AggregateId => CharacterId;
+    }
+
+    /// <summary>Установлен лимит использований классового умения.</summary>
+    public record ClassFeatureMaxUsesSet(
+        Guid CharacterId,
+        string FeatureId,
+        int MaxUses) : ICharacterEvent
     {
         public Guid AggregateId => CharacterId;
     }

@@ -52,7 +52,8 @@ namespace dnd_game.presentation.api
         IRateLimiter rateLimiter,
         ILogger<WebSocketHandler> logger,
         UndoManager undoManager,
-        ICharacterOwnershipRepository ownershipRepository)
+        ICharacterOwnershipRepository ownershipRepository,
+        WebSocketEventDispatcher dispatcher)
     {
         private readonly ICommandBus _commandBus = commandBus ?? throw new ArgumentNullException(nameof(commandBus));
         private readonly IQueryBus _queryBus = queryBus ?? throw new ArgumentNullException(nameof(queryBus));
@@ -67,6 +68,7 @@ namespace dnd_game.presentation.api
         private readonly ILogger<WebSocketHandler> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         private readonly UndoManager _undoManager = undoManager ?? throw new ArgumentNullException(nameof(undoManager));
         private readonly ICharacterOwnershipRepository _ownershipRepository = ownershipRepository ?? throw new ArgumentNullException(nameof(ownershipRepository));
+        private readonly WebSocketEventDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
 
         private const int MaxMessageSize = 64 * 1024; // 64 КБ
         private const int ReceiveBufferSize = 4096;
@@ -180,6 +182,7 @@ namespace dnd_game.presentation.api
             {
                 await CloseConnection(state, WebSocketCloseStatus.NormalClosure, "Сервер закрывает соединение");
             }
+            _dispatcher.AddConnection(state);
         }
 
         private async Task SendErrorMessage(WebSocketConnectionState state, string errorCode, string message)
@@ -190,6 +193,59 @@ namespace dnd_game.presentation.api
                 Message = message
             };
             await SendMessageAsync(state, errorMsg);
+        }
+
+        private async Task HandleReAuthentication(
+        WebSocketConnectionState state,
+        AuthRequestMessage authReq,
+        CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(authReq.Token))
+            {
+                await SendMessageAsync(state, new AuthResponseMessage
+                {
+                    Success = false,
+                    Error = "Токен не указан.",
+                    CorrelationId = authReq.CorrelationId
+                });
+                return;
+            }
+
+            var userContext = await _authProvider.GetUserContextFromTokenAsync(authReq.Token, cancellationToken);
+            if (userContext == null)
+            {
+                await SendMessageAsync(state, new AuthResponseMessage
+                {
+                    Success = false,
+                    Error = "Недействительный токен.",
+                    CorrelationId = authReq.CorrelationId
+                });
+                return;
+            }
+
+            // Обновляем идентификатор пользователя
+            state.UserId = userContext.UserId;
+
+            // Если у соединения уже была привязана сессия, проверяем доступ нового пользователя к ней
+            if (state.SessionId.HasValue)
+            {
+                bool canStayInSession = await _permissionChecker.IsMemberOfCampaignAsync(
+                    state.SessionId.Value, cancellationToken);
+
+                if (!canStayInSession)
+                {
+                    // Сбрасываем сессию и удаляем связь
+                    _sessionManager.RemoveConnection(state.ConnectionId);
+                    state.SessionId = null;
+                }
+            }
+
+            await SendMessageAsync(state, new AuthResponseMessage
+            {
+                Success = true,
+                UserId = state.UserId,
+                CorrelationId = authReq.CorrelationId
+            });
         }
 
         private async Task ReceiveLoopAsync(WebSocketConnectionState state, CancellationToken cancellationToken)
@@ -341,6 +397,7 @@ namespace dnd_game.presentation.api
             _connections.TryRemove(state.ConnectionId, out _);
             _metricsCollector.IncrementCounter("dnd.websocket.disconnected");
             _logger.LogInformation("WebSocket-подключение {ConnectionId} закрыто ({Status})", state.ConnectionId, status);
+            _dispatcher.RemoveConnection(state.ConnectionId);
         }
 
         private async Task DispatchMessageAsync(WebSocketConnectionState state, INetworkMessage networkMsg, CancellationToken cancellationToken)
@@ -349,6 +406,9 @@ namespace dnd_game.presentation.api
             {
                 case CommandNetworkMessage cmd:
                     await HandleCommand(state, cmd);
+                    break;
+                case AuthRequestMessage authReq:
+                    await HandleReAuthentication(state, authReq, cancellationToken);
                     break;
 
                 case QueryNetworkMessage query:
@@ -365,16 +425,6 @@ namespace dnd_game.presentation.api
 
                 case RedoNetworkMessage redo:
                     await HandleRedo(state, redo);
-                    break;
-                case AuthRequestMessage authReq:
-                    // Аутентификация уже выполнена в HandleAsync по токену из query-строки.
-                    // Здесь можно просто отправить подтверждение (AuthResponse).
-                    await SendMessageAsync(state, new AuthResponseMessage
-                    {
-                        Success = true,
-                        UserId = state.UserId,
-                        CorrelationId = authReq.CorrelationId
-                    });
                     break;
 
                 default:

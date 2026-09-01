@@ -165,6 +165,13 @@ public class CharacterHandler(IEventStore eventStore) : CharacterCommandHandlerB
         await SaveCharacterAsync(aggregate, cancellationToken);
     }
 
+    public async Task Handle(SetClassFeatureMaxUsesCommand command, CancellationToken ct)
+    {
+        var aggregate = await GetCharacterAsync(command.CharacterId, ct);
+        aggregate.SetClassFeatureMaxUses(command.FeatureId, command.MaxUses);
+        await SaveCharacterAsync(aggregate, ct);
+    }
+
     public async Task Handle(SetGoldCommand command, CancellationToken cancellationToken)
     {
         var aggregate = await GetCharacterAsync(command.CharacterId, cancellationToken);

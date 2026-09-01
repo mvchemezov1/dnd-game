@@ -53,6 +53,7 @@ namespace dnd_game.presentation.api
 
         /// <summary>Запрос на бросок инициативы участника.</summary>
         public sealed record RollInitiativeRequest(Guid ParticipantId, int InitiativeRoll, int DexterityModifier);
+        public sealed record SpendHitDieRequest(int HitDieType, int Roll, int ConstitutionModifier);
 
         /// <summary>Запрос на добавление участника в бой.</summary>
         public sealed record AddParticipantRequest(Guid ParticipantId, int Initiative);

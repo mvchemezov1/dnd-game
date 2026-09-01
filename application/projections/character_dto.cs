@@ -59,6 +59,8 @@ namespace dnd_game.application.projections
 
         /// <summary>Список известных заклинаний.</summary>
         public List<string> KnownSpells { get; init; } = [];
+        public Dictionary<string, int> ClassFeatureMaxUses { get; init; } = [];
+        public Dictionary<string, int> ClassFeatureUsedCount { get; init; } = [];
 
         /// <summary>Максимальное количество ячеек заклинаний по уровням (уровень → количество).</summary>
         public Dictionary<int, int> MaxSpellSlots { get; init; } = [];
@@ -133,6 +135,7 @@ namespace dnd_game.application.projections
 
         /// <summary>Персонаж скрывается (Hide).</summary>
         public bool IsHiding { get; init; }
+        public bool IsInCombat { get; init; }
 
     }
 

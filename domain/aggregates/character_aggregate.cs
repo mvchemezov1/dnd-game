@@ -33,10 +33,13 @@ namespace dnd_game.domain.aggregates
         private string _currentRestType = "";
         private const int DefaultBaseSpeed = 30;
         private int _baseSpeed = DefaultBaseSpeed;
-
+        public Dictionary<string, int> ClassFeatureMaxUses { get; private set; } = [];
+        public Dictionary<string, int> ClassFeatureUsedCount { get; private set; } = [];
         public List<string> PreparedSpells { get; private set; } = [];
         public Dictionary<string, int> ClassFeatureUses { get; private set; } = [];
         public List<string> AttunedItems { get; private set; } = [];
+
+        public bool IsInCombat { get; private set; }
 
         public bool IsDashing { get; private set; }
         public bool IsDisengaged { get; private set; }
@@ -105,8 +108,11 @@ namespace dnd_game.domain.aggregates
                     MaxHitPoints = e.MaxHitPoints;
                     HitPoints = e.MaxHitPoints;
                     _baseSpeed = DefaultBaseSpeed;
-                    break;
 
+                    // Инициализируем кости хитов: одна d8 (можно заменить на d6 или d10 после выбора класса)
+                    HitDiceRemaining = new Dictionary<int, int> { { 8, 1 } };
+                    MaxHitDice = new Dictionary<int, int> { { 8, 1 } };
+                    break;
                 case CharacterUpdated e:
                     if (e.Name != null) Name = e.Name;
                     if (e.MaxHitPoints.HasValue)
@@ -118,6 +124,13 @@ namespace dnd_game.domain.aggregates
 
                 case CharacterDamageTaken e:
                     ApplyDamage(e.Amount);
+                    break;
+                case CharacterEnteredCombat e:
+                    IsInCombat = true;
+                    break;
+
+                case CharacterLeftCombat e:
+                    IsInCombat = false;
                     break;
 
                 case CharacterHealed e:
@@ -283,6 +296,11 @@ namespace dnd_game.domain.aggregates
                     DeathSaveFailures = 0;
                     IsStable = false;
                     break;
+                case ClassFeatureMaxUsesSet e:
+                    ClassFeatureMaxUses[e.FeatureId] = e.MaxUses;
+                    if (!ClassFeatureUsedCount.ContainsKey(e.FeatureId))
+                        ClassFeatureUsedCount[e.FeatureId] = 0;
+                    break;
 
                 case ConcentrationStarted e:
                     Concentrating = true;
@@ -321,9 +339,6 @@ namespace dnd_game.domain.aggregates
                 case ClassFeatureUsed e:
                     ClassFeatureUses[e.FeatureId] = ClassFeatureUses.GetValueOrDefault(e.FeatureId) + 1;
                     break;
-                case ClassFeatureRecharged e:
-                    ClassFeatureUses[e.FeatureId] = 0;
-                    break;
 
                 case ItemAttuned e:
                     if (!AttunedItems.Contains(e.ItemId)) AttunedItems.Add(e.ItemId);
@@ -360,6 +375,9 @@ namespace dnd_game.domain.aggregates
                     break;
                 case MovementRestored e:
                     MovementModifiers.Remove(e.ImpairmentType);
+                    break;
+                case ClassFeatureRecharged e:
+                    ClassFeatureUsedCount[e.FeatureId] = 0;
                     break;
 
                 case CharacterClimbed e:
@@ -545,6 +563,21 @@ namespace dnd_game.domain.aggregates
             ApplyChange(new SavingThrowProficiencyRemoved(Id, ability));
         }
 
+        public void UseClassFeature(string featureId)
+        {
+            if (string.IsNullOrWhiteSpace(featureId))
+                throw new ArgumentException("Идентификатор умения не может быть пустым.", nameof(featureId));
+
+            if (!ClassFeatureMaxUses.TryGetValue(featureId, out int maxUses))
+                throw new InvalidOperationException("Умение не настроено (лимит использований не задан).");
+
+            int used = ClassFeatureUsedCount.GetValueOrDefault(featureId);
+            if (used >= maxUses)
+                throw new InvalidOperationException($"Лимит использований умения '{featureId}' исчерпан.");
+
+            ApplyChange(new ClassFeatureUsed(Id, featureId));
+        }
+
         public void AddFeat(string featName)
         {
             if (Feats.Contains(featName)) throw new InvalidOperationException("Черта уже изучена.");
@@ -586,6 +619,20 @@ namespace dnd_game.domain.aggregates
             ApplyChange(new SpellSlotUsed(Id, slotLevel));
         }
 
+        public void EnterCombat(Guid combatId)
+        {
+            if (IsDead)
+                throw new InvalidOperationException("Мёртвый персонаж не может вступить в бой.");
+            ApplyChange(new CharacterEnteredCombat(Id, combatId));
+        }
+
+        public void LeaveCombat(Guid combatId)
+        {
+            if (!IsInCombat)
+                return; // уже не в бою
+            ApplyChange(new CharacterLeftCombat(Id, combatId));
+        }
+
         public void RestoreAllSpellSlots()
         {
             foreach (var kvp in MaxSpellSlots)
@@ -601,10 +648,14 @@ namespace dnd_game.domain.aggregates
 
         public void SpendHitDie(int hitDieType, int roll, int constitutionModifier)
         {
+            if (_currentRestType != "Short")
+                throw new InvalidOperationException("Кости хитов можно тратить только во время короткого отдыха.");
+
             if (!HitDiceRemaining.TryGetValue(hitDieType, out int remaining) || remaining <= 0)
                 throw new InvalidOperationException("Нет доступных костей хитов этого типа.");
             if (HitPoints <= 0 && !IsStable)
                 throw new InvalidOperationException("Нельзя тратить кости хитов, находясь при смерти.");
+
             int healed = roll + constitutionModifier;
             ApplyChange(new HitDieSpent(Id, hitDieType, healed));
         }
@@ -838,9 +889,26 @@ namespace dnd_game.domain.aggregates
             ApplyChange(new FallDamageTaken(Id, fallDistanceFeet, damage));
         }
 
+        public void SetClassFeatureMaxUses(string featureId, int maxUses)
+        {
+            if (string.IsNullOrWhiteSpace(featureId))
+                throw new ArgumentException("Идентификатор умения не может быть пустым.", nameof(featureId));
+            if (maxUses < 0)
+                throw new ArgumentOutOfRangeException(nameof(maxUses), "Лимит не может быть отрицательным.");
+            ApplyChange(new ClassFeatureMaxUsesSet(Id, featureId, maxUses));
+        }
+
         public void StartRest(string restType)
         {
-            if (string.IsNullOrWhiteSpace(restType)) throw new ArgumentException("Тип отдыха не может быть пустым.", nameof(restType));
+            if (string.IsNullOrWhiteSpace(restType))
+                throw new ArgumentException("Тип отдыха не может быть пустым.", nameof(restType));
+            if (IsDead)
+                throw new InvalidOperationException("Мёртвый персонаж не может отдыхать.");
+            if (HitPoints <= 0)
+                throw new InvalidOperationException("Персонаж без сознания не может отдыхать.");
+            if (IsInCombat)
+                throw new InvalidOperationException("Нельзя начинать отдых во время боя.");
+
             _currentRestType = restType;
             ApplyChange(new RestStarted(Id, restType, DateTime.UtcNow));
         }
@@ -889,14 +957,48 @@ namespace dnd_game.domain.aggregates
 
         public void CastSpell(string spellId, int spellSlotLevel)
         {
+            if (string.IsNullOrWhiteSpace(spellId))
+                throw new ArgumentException("Идентификатор заклинания не может быть пустым.", nameof(spellId));
+
+            // Проверка известности заклинания
             if (!KnownSpells.Contains(spellId))
-                throw new InvalidOperationException("Заклинание неизвестно.");
-            if (!MaxSpellSlots.TryGetValue(spellSlotLevel, out int maxSlots))
-                throw new InvalidOperationException("Нет такого уровня ячеек заклинаний.");
+                throw new InvalidOperationException("Заклинание неизвестно персонажу.");
+
+            // Проверка подготовки (если персонаж использует подготовку)
+            if (PreparedSpells.Count > 0 && !PreparedSpells.Contains(spellId))
+                throw new InvalidOperationException("Заклинание не подготовлено.");
+
+            // Проверка ячеек
+            if (!MaxSpellSlots.TryGetValue(spellSlotLevel, out int maxSlots) || maxSlots <= 0)
+                throw new InvalidOperationException($"Нет ячеек заклинаний {spellSlotLevel}-го уровня.");
             int used = UsedSpellSlots.GetValueOrDefault(spellSlotLevel);
             if (used >= maxSlots)
-                throw new InvalidOperationException("Нет доступных ячеек этого уровня.");
+                throw new InvalidOperationException($"Нет доступных ячеек {spellSlotLevel}-го уровня.");
+
+            // Проверка концентрации
+            if (MagicRules.RequiresConcentration(spellId) && Concentrating)
+                throw new InvalidOperationException("Персонаж уже концентрируется на другом заклинании.");
+
+            // Проверка материального компонента (упрощённо)
+            if (MagicRules.HasMaterialComponent(spellId, out var materialName, out _) &&
+                !string.IsNullOrWhiteSpace(materialName))
+            {
+                bool hasMaterial = Inventory.Any(i =>
+                    i.Name.Equals(materialName, StringComparison.OrdinalIgnoreCase) ||
+                    i.ItemId.Equals(materialName, StringComparison.OrdinalIgnoreCase));
+
+                if (!hasMaterial)
+                    throw new InvalidOperationException($"Отсутствует материальный компонент: {materialName}");
+            }
+
+            // Расходуем ячейку
             ApplyChange(new SpellSlotUsed(Id, spellSlotLevel));
+
+            // Если заклинание требует концентрации, начинаем её
+            if (MagicRules.RequiresConcentration(spellId))
+            {
+                ApplyChange(new ConcentrationStarted(Id, spellId));
+            }
         }
 
         public void TakeShortRest(IEnumerable<(int HitDieType, int Roll, int ConstitutionModifier)>? hitDiceSpent = null)
@@ -908,7 +1010,7 @@ namespace dnd_game.domain.aggregates
                     SpendHitDie(hitDieType, roll, constitutionModifier);
                 }
             }
-            ApplyChange(new RestCompleted(Id, "Short", 0, DateTime.UtcNow));
+            // Отдых не завершается автоматически; его нужно завершить через EndRest()
         }
 
         public void TakeLongRest()
@@ -968,20 +1070,6 @@ namespace dnd_game.domain.aggregates
             ApplyChange(new SpellUnprepared(Id, spellId));
         }
 
-        public void UseClassFeature(string featureId)
-        {
-            if (string.IsNullOrWhiteSpace(featureId))
-                throw new ArgumentException("Идентификатор умения не может быть пустым.", nameof(featureId));
-            ApplyChange(new ClassFeatureUsed(Id, featureId));
-        }
-
-        public void RechargeFeature(string featureId)
-        {
-            if (string.IsNullOrWhiteSpace(featureId))
-                throw new ArgumentException("Идентификатор умения не может быть пустым.", nameof(featureId));
-            ApplyChange(new ClassFeatureRecharged(Id, featureId));
-        }
-
         public void AttuneItem(string itemId)
         {
             if (string.IsNullOrWhiteSpace(itemId))
@@ -990,7 +1078,17 @@ namespace dnd_game.domain.aggregates
                 throw new InvalidOperationException("Достигнут лимит аттунемента (3 предмета).");
             if (AttunedItems.Contains(itemId))
                 throw new InvalidOperationException("Предмет уже аттунен.");
+            if (!MagicItems.IsMagical(itemId))
+                throw new InvalidOperationException("Этот предмет не является магическим и не может быть аттунен.");
+
             ApplyChange(new ItemAttuned(Id, itemId));
+        }
+
+        public void RechargeFeature(string featureId)
+        {
+            if (string.IsNullOrWhiteSpace(featureId))
+                throw new ArgumentException("Идентификатор умения не может быть пустым.", nameof(featureId));
+            ApplyChange(new ClassFeatureRecharged(Id, featureId));
         }
 
         public void UnattuneItem(string itemId)

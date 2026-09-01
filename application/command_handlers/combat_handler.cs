@@ -132,16 +132,31 @@ namespace dnd_game.application.command_handlers
 
         public async Task Handle(AddParticipantToCombat command, CancellationToken cancellationToken)
         {
-            var aggregate = await GetCombatAsync(command.CombatId, cancellationToken);
-            aggregate.AddParticipant(command.ParticipantId, command.Initiative);
-            await SaveCombatAsync(aggregate, cancellationToken);
+            var combat = await GetCombatAsync(command.CombatId, cancellationToken);
+            combat.AddParticipant(command.ParticipantId, command.Initiative);
+            await SaveCombatAsync(combat, cancellationToken);
+
+            // Сообщаем персонажу, что он в бою
+            var character = await _eventStore.Load<CharacterAggregate>(command.ParticipantId, cancellationToken);
+            if (character != null)
+            {
+                character.EnterCombat(command.CombatId);
+                await _eventStore.Save(character, cancellationToken);
+            }
         }
 
         public async Task Handle(RemoveParticipantFromCombat command, CancellationToken cancellationToken)
         {
-            var aggregate = await GetCombatAsync(command.CombatId, cancellationToken);
-            aggregate.RemoveParticipant(command.ParticipantId);
-            await SaveCombatAsync(aggregate, cancellationToken);
+            var combat = await GetCombatAsync(command.CombatId, cancellationToken);
+            combat.RemoveParticipant(command.ParticipantId);
+            await SaveCombatAsync(combat, cancellationToken);
+
+            var character = await _eventStore.Load<CharacterAggregate>(command.ParticipantId, cancellationToken);
+            if (character != null)
+            {
+                character.LeaveCombat(command.CombatId);
+                await _eventStore.Save(character, cancellationToken);
+            }
         }
 
         public async Task Handle(TakeMoveAction command, CancellationToken cancellationToken)

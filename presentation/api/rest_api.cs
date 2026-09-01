@@ -226,12 +226,19 @@ namespace dnd_game.presentation.api
         }
 
         /// <summary>Возвращает текущие, максимальные и временные хиты.</summary>
-        [HttpGet("{id:guid}/hit-points")]
-        public async Task<IActionResult> GetHitPoints(Guid id, CancellationToken cancellationToken)
+        [HttpPost("{id:guid}/rest/spend-hit-die")]
+        public async Task<IActionResult> SpendHitDie(
+        Guid id,
+        [FromBody] SpendHitDieRequest request,
+        CancellationToken cancellationToken)
         {
-            if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
-            var result = await _queryBus.QueryAsync(new GetCharacterHitPoints(id), cancellationToken);
-            return OkOrNotFound(result);
+            if (id == Guid.Empty)
+                return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
+            var command = new SpendHitDie(id, request.HitDieType, request.Roll, request.ConstitutionModifier);
+            await _commandBus.SendAsync(command, CreateContext(cancellationToken));
+            return Ok();
         }
 
         // ---------- Характеристики ----------
@@ -378,6 +385,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetSpells(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
             var result = await _queryBus.QueryAsync(new GetCharacterSpells(id), cancellationToken);
             return OkOrNotFound(result);
         }
@@ -406,6 +415,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetInventory(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
             var result = await _queryBus.QueryAsync(new GetCharacterInventory(id), cancellationToken);
             return Ok(result);
         }
@@ -430,6 +441,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetEquipment(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
             var result = await _queryBus.QueryAsync(new GetCharacterEquipment(id), cancellationToken);
             return Ok(result);
         }
@@ -483,6 +496,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetDeathStatus(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
             var result = await _queryBus.QueryAsync(new GetCharacterDeathStatus(id), cancellationToken);
             return OkOrNotFound(result);
         }
@@ -539,6 +554,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetCombatStats(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
             var result = await _queryBus.QueryAsync(new GetCharacterCombatStats(id), cancellationToken);
             return OkOrNotFound(result);
         }
@@ -565,6 +582,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetDefenses(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
             var result = await _queryBus.QueryAsync(new GetCharacterDefenses(id), cancellationToken);
             return OkOrNotFound(result);
         }
@@ -947,6 +966,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetActiveQuests(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор кампании не может быть пустым." });
+            if (!await _permissionChecker.IsMemberOfCampaignAsync(id, cancellationToken))
+                return Forbid();
             var result = await _queryBus.QueryAsync(new GetActiveQuests(id), cancellationToken);
             return Ok(result);
         }
@@ -955,6 +976,8 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetQuests(Guid id, [FromQuery] string? status = null, CancellationToken cancellationToken = default)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор кампании не может быть пустым." });
+            if (!await _permissionChecker.IsMemberOfCampaignAsync(id, cancellationToken))
+                return Forbid();
             var parsedStatus = ParseStatus(status);
             var result = await _queryBus.QueryAsync(new GetQuestsByStatus(id, parsedStatus), cancellationToken);
             return Ok(result);

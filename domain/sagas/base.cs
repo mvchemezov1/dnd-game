@@ -101,6 +101,11 @@ namespace dnd_game.domain.sagas
 
         /// <summary>Удаляет состояние саги.</summary>
         Task DeleteAsync(Guid sagaId, CancellationToken cancellationToken = default);
+        /// <summary>
+        /// Пытается сохранить состояние саги с проверкой ожидаемой версии.
+        /// Возвращает false, если версия в хранилище не совпадает с expectedVersion.
+        /// </summary>
+        Task<bool> TrySaveAsync(ISagaState state, int expectedVersion, CancellationToken cancellationToken = default);
     }
 
     /// <summary>

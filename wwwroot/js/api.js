@@ -187,11 +187,21 @@
                 headers['X-Session-Id'] = sid;
             }
 
-            const res = await fetch(path, {
-                method,
-                headers,
-                body: body !== undefined ? JSON.stringify(body) : undefined
-            });
+            let res;
+            try {
+                res = await fetch(path, {
+                    method,
+                    headers,
+                    body: body !== undefined ? JSON.stringify(body) : undefined
+                });
+            } catch (e) {
+                // Сетевая ошибка (сервер недоступен, нет соединения)
+                console.error('Сетевая ошибка при запросе:', e);
+                if (typeof window.notifyError === 'function') {
+                    window.notifyError(new Error('Проблемы с сетью или сервером. Проверьте подключение.'), 'Ошибка сети');
+                }
+                throw new ApiError(0, 'Сетевая ошибка: невозможно выполнить запрос.');
+            }
 
             if (res.status === 204) {
                 return null;
@@ -208,7 +218,14 @@
             }
 
             if (!res.ok) {
-                const msg = (data && (data.error || data.message || data.title)) || `Ошибка ${res.status}`;
+                let msg = (data && (data.error || data.message || data.title)) || `Ошибка ${res.status}`;
+                // Если есть структура errors (FluentValidation), берём первую ошибку
+                if (data && data.errors) {
+                    const firstKey = Object.keys(data.errors)[0];
+                    if (firstKey && Array.isArray(data.errors[firstKey]) && data.errors[firstKey].length) {
+                        msg = data.errors[firstKey][0];
+                    }
+                }
                 throw new ApiError(res.status, msg);
             }
 
@@ -555,6 +572,14 @@
             }
         }
     }
+
+    // Глобальная индикация состояния сети
+    window.addEventListener('offline', () => {
+        if (window.toast) window.toast('Соединение с интернетом потеряно', 'error', 5000);
+    });
+    window.addEventListener('online', () => {
+        if (window.toast) window.toast('Соединение восстановлено', 'success', 3000);
+    });
 
     // Экспорт в глобальную область видимости
     window.Api = new Api();

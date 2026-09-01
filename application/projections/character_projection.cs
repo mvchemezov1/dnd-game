@@ -45,7 +45,9 @@ namespace dnd_game.application.projections
                     Id = e.CharacterId,
                     Name = e.Name,
                     MaxHitPoints = e.MaxHitPoints,
-                    HitPoints = e.MaxHitPoints
+                    HitPoints = e.MaxHitPoints,
+                    HitDiceRemaining = new Dictionary<int, int> { { 8, 1 } },
+                    MaxHitDice = new Dictionary<int, int> { { 8, 1 } }
                 };
                 _state[e.CharacterId] = dto;
             }
@@ -95,6 +97,64 @@ namespace dnd_game.application.projections
                         PositionX = e.ToX,
                         PositionY = e.ToY
                     };
+                }
+            }
+            InvalidateCache(e.CharacterId);
+        }
+
+        public void Apply(ClassFeatureMaxUsesSet e)
+        {
+            lock (_syncRoot)
+            {
+                if (_state.TryGetValue(e.CharacterId, out var dto))
+                {
+                    var maxUses = new Dictionary<string, int>(dto.ClassFeatureMaxUses) { [e.FeatureId] = e.MaxUses };
+                    _state[e.CharacterId] = dto with { ClassFeatureMaxUses = maxUses };
+                }
+            }
+            InvalidateCache(e.CharacterId);
+        }
+
+        public void Apply(ClassFeatureRecharged e)
+        {
+            lock (_syncRoot)
+            {
+                if (_state.TryGetValue(e.CharacterId, out var dto))
+                {
+                    var used = new Dictionary<string, int>(dto.ClassFeatureUsedCount) { [e.FeatureId] = 0 };
+                    _state[e.CharacterId] = dto with { ClassFeatureUsedCount = used };
+                }
+            }
+            InvalidateCache(e.CharacterId);
+        }
+
+        public void Apply(ClassFeatureUsed e)
+        {
+            lock (_syncRoot)
+            {
+                if (_state.TryGetValue(e.CharacterId, out var dto))
+                {
+                    var used = new Dictionary<string, int>(dto.ClassFeatureUsedCount);
+                    used[e.FeatureId] = used.GetValueOrDefault(e.FeatureId) + 1;
+                    _state[e.CharacterId] = dto with { ClassFeatureUsedCount = used };
+                }
+            }
+            InvalidateCache(e.CharacterId);
+        }
+
+        public void Apply(SpellSlotsRestored e)
+        {
+            ArgumentNullException.ThrowIfNull(e);
+            lock (_syncRoot)
+            {
+                if (_state.TryGetValue(e.CharacterId, out var dto))
+                {
+                    var used = new Dictionary<int, int>(dto.UsedSpellSlots);
+                    if (used.TryGetValue(e.SlotLevel, out int currentUsed))
+                    {
+                        used[e.SlotLevel] = Math.Max(0, currentUsed - e.RestoredCount);
+                    }
+                    _state[e.CharacterId] = dto with { UsedSpellSlots = used };
                 }
             }
             InvalidateCache(e.CharacterId);
@@ -153,6 +213,30 @@ namespace dnd_game.application.projections
                 if (_state.TryGetValue(e.CharacterId, out var dto))
                 {
                     _state[e.CharacterId] = dto with { TemporaryHitPoints = Math.Max(0, e.Amount) };
+                }
+            }
+            InvalidateCache(e.CharacterId);
+        }
+
+        public void Apply(CharacterEnteredCombat e)
+        {
+            lock (_syncRoot)
+            {
+                if (_state.TryGetValue(e.CharacterId, out var dto))
+                {
+                    _state[e.CharacterId] = dto with { IsInCombat = true };
+                }
+            }
+            InvalidateCache(e.CharacterId);
+        }
+
+        public void Apply(CharacterLeftCombat e)
+        {
+            lock (_syncRoot)
+            {
+                if (_state.TryGetValue(e.CharacterId, out var dto))
+                {
+                    _state[e.CharacterId] = dto with { IsInCombat = false };
                 }
             }
             InvalidateCache(e.CharacterId);
@@ -371,19 +455,6 @@ namespace dnd_game.application.projections
                     var used = new Dictionary<int, int>(dto.UsedSpellSlots);
                     used[e.SlotLevel] = used.GetValueOrDefault(e.SlotLevel, 0) + 1;
                     _state[e.CharacterId] = dto with { UsedSpellSlots = used };
-                }
-            }
-            InvalidateCache(e.CharacterId);
-        }
-
-        public void Apply(SpellSlotsRestored e)
-        {
-            ArgumentNullException.ThrowIfNull(e);
-            lock (_syncRoot)
-            {
-                if (_state.TryGetValue(e.CharacterId, out var dto))
-                {
-                    _state[e.CharacterId] = dto with { UsedSpellSlots = [] };
                 }
             }
             InvalidateCache(e.CharacterId);
@@ -1026,6 +1097,9 @@ namespace dnd_game.application.projections
                 case MaxHitPointsIncreased ev: Apply(ev); break;
                 case HitDieAdded ev: Apply(ev); break;
                 case CharacterMoved ev: Apply(ev); break;
+                case CharacterEnteredCombat ev: Apply(ev); break;
+                case CharacterLeftCombat ev: Apply(ev); break;
+                case ClassFeatureMaxUsesSet ev: Apply(ev); break;
                 default:
                     _logger.LogDebug("Получено неизвестное событие {EventType} в проекции персонажей", e.GetType().Name);
                     break;

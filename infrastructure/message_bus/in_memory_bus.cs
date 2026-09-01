@@ -1,4 +1,11 @@
 ﻿#nullable enable
+using dnd_game.application.event_handlers;
+using dnd_game.domain.commands;
+using dnd_game.domain.events;
+using dnd_game.domain.queries;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Serilog.Core;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -6,12 +13,6 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using dnd_game.application.event_handlers;
-using dnd_game.domain.commands;
-using dnd_game.domain.events;
-using dnd_game.domain.queries;
 
 namespace dnd_game.infrastructure.message_bus
 {
@@ -19,10 +20,11 @@ namespace dnd_game.infrastructure.message_bus
     /// Единая шина для команд, запросов и событий, работающая в памяти процесса.
     /// Поддерживает обработчики, зарегистрированные через DI, делегаты и явные экземпляры.
     /// </summary>
-    public class InMemoryBus(IServiceProvider provider, ILogger<InMemoryBus> logger) : ICommandBus, IQueryBus, IEventBus
+    public class InMemoryBus(IServiceProvider provider, ILogger<InMemoryBus> logger, IIdempotencyStore? idempotencyStore = null) : ICommandBus, IQueryBus, IEventBus
     {
         private readonly IServiceProvider _provider = provider ?? throw new ArgumentNullException(nameof(provider));
         private readonly ILogger<InMemoryBus> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        private readonly IIdempotencyStore _idempotencyStore = idempotencyStore ?? new InMemoryIdempotencyStore();
 
         // Команды: тип -> список обработчиков (делегатов)
         private readonly ConcurrentDictionary<Type, List<Func<ICommand, CommandContext?, Task>>> _commandHandlers = new();
@@ -75,10 +77,23 @@ namespace dnd_game.infrastructure.message_bus
         {
             ArgumentNullException.ThrowIfNull(command);
             context ??= new CommandContext();
+
+            // Проверка идемпотентности
+            if (command is IIdempotentCommand idempotent)
+            {
+                bool alreadyProcessed = await _idempotencyStore.ContainsAsync(idempotent.IdempotencyKey, context.CancellationToken);
+                if (alreadyProcessed)
+                {
+                    _logger.LogDebug("Команда {CommandType} с ключом идемпотентности {Key} уже обработана, пропускаем.",
+                        command.GetType().Name, idempotent.IdempotencyKey);
+                    return;
+                }
+            }
+
+            using var _ = CommandContextAccessor.Push(context);
             var commandType = command.GetType();
             var ct = context.CancellationToken;
 
-            // Получаем все поведения конвейера
             var behaviors = _provider.GetServices<ICommandPipelineBehavior>().ToArray();
 
             // Финальный делегат — выполняет реальную диспетчеризацию
@@ -131,7 +146,24 @@ namespace dnd_game.infrastructure.message_bus
                 handlerAction = () => behavior.HandleAsync(command, context, next);
             }
 
-            await handlerAction().ConfigureAwait(false);
+            try
+            {
+                await handlerAction().ConfigureAwait(false);
+
+                // После успешного выполнения сохраняем ключ идемпотентности
+                if (command is IIdempotentCommand idempotentSuccess)
+                {
+                    await _idempotencyStore.TryAddAsync(
+                        idempotentSuccess.IdempotencyKey,
+                        TimeSpan.FromHours(24), // можно взять из конфигурации
+                        CancellationToken.None);
+                }
+            }
+            catch
+            {
+                // Ключ не сохраняется при ошибке, команда может быть повторена
+                throw;
+            }
         }
 
         public async Task<object?> QueryAsyncUntyped(IQuery query, QueryContext? context = null, CancellationToken cancellationToken = default)
@@ -321,21 +353,32 @@ namespace dnd_game.infrastructure.message_bus
             ArgumentNullException.ThrowIfNull(@event);
             var eventType = @event.GetType();
 
-            // 1. Обработчики, подписанные на точный тип
+            // Собираем все регистрации, которые должны получить это событие
+            var registrations = new List<EventHandlerRegistration>();
+
+            // Точный тип
             if (_eventHandlers.TryGetValue(eventType, out var exactRegistrations))
             {
-                foreach (var reg in exactRegistrations)
-                    await InvokeRegistration(reg, @event, eventType, cancellationToken).ConfigureAwait(false);
+                registrations.AddRange(exactRegistrations);
             }
 
-            // 2. Обработчики, подписанные на базовые типы/интерфейсы
+            // Интерфейсы, которые реализует тип события
             foreach (var kvp in _eventHandlers)
             {
-                if (kvp.Key == eventType) continue; // уже обработано
+                if (kvp.Key == eventType) continue;
                 if (!kvp.Key.IsAssignableFrom(eventType)) continue;
+                registrations.AddRange(kvp.Value);
+            }
 
-                foreach (var reg in kvp.Value)
-                    await InvokeRegistration(reg, @event, kvp.Key, cancellationToken).ConfigureAwait(false);
+            // Дедупликация по ссылке на делегат или типу обработчика
+            var uniqueRegistrations = registrations
+                .GroupBy(reg => reg.HandlerDelegate ?? (object?)reg.HandlerType)
+                .Select(group => group.First())
+                .ToList();
+
+            foreach (var reg in uniqueRegistrations)
+            {
+                await InvokeRegistration(reg, @event, eventType, cancellationToken).ConfigureAwait(false);
             }
         }
 

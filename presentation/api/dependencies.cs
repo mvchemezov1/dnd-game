@@ -198,6 +198,7 @@ namespace dnd_game.presentation.api
             services.AddSingleton<ICommandPipelineBehavior, CommandAuthorizationBehavior>();
             services.AddSingleton<IAccessTokenBlacklist>(sp =>
             new RedisAccessTokenBlacklist(sp.GetRequiredService<IConnectionMultiplexer>()));
+            services.AddSingleton<WebSocketEventDispatcher>();
 
             // 9. Менеджер согласованности
             services.AddSingleton<IConsistencyManager>(sp =>
@@ -226,6 +227,14 @@ namespace dnd_game.presentation.api
                     TimeSpan.FromMinutes(1)));
             services.AddSingleton<CampaignProjection>();
             services.AddSingleton<JourneyProjection>();
+
+            services.AddSingleton<IIdempotencyStore>(sp =>
+            {
+                var redis = sp.GetService<IConnectionMultiplexer>();
+                if (redis != null)
+                    return new RedisIdempotencyStore(redis);
+                return new InMemoryIdempotencyStore();
+            });
 
             services.AddHostedService(sp => new OutboxProcessor(
             sp,

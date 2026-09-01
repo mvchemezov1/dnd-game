@@ -32,7 +32,39 @@ namespace dnd_game.infrastructure.persistence
 
             return JsonConvert.DeserializeObject<ISagaState>(json, JsonSettings);
         }
+        public async Task<bool> TrySaveAsync(ISagaState state, int expectedVersion, CancellationToken cancellationToken = default)
+        {
+            const string sql = @"
+                UPDATE saga_states
+                SET correlation_id = @correlationId,
+                    status = @status,
+                    version = @version,
+                    updated_at = @updatedAt,
+                    state_json = @stateJson::jsonb
+                WHERE saga_id = @sagaId AND version = @expectedVersion;
 
+                INSERT INTO saga_states (saga_id, correlation_id, status, version, created_at, updated_at, state_json)
+                SELECT @sagaId, @correlationId, @status, @version, @createdAt, @updatedAt, @stateJson::jsonb
+                WHERE NOT EXISTS (SELECT 1 FROM saga_states WHERE saga_id = @sagaId);
+            ";
+
+            string json = JsonConvert.SerializeObject(state, JsonSettings);
+
+            await using var connection = await OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = new NpgsqlCommand(sql, connection);
+
+            command.Parameters.AddWithValue("sagaId", state.SagaId);
+            command.Parameters.AddWithValue("correlationId", state.CorrelationId);
+            command.Parameters.AddWithValue("status", state.Status.ToString());
+            command.Parameters.AddWithValue("version", state.Version);
+            command.Parameters.AddWithValue("expectedVersion", expectedVersion);
+            command.Parameters.AddWithValue("createdAt", state.CreatedAt);
+            command.Parameters.AddWithValue("updatedAt", state.UpdatedAt ?? (object)DBNull.Value);
+            command.Parameters.AddWithValue("stateJson", json);
+
+            int affected = await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return affected > 0;
+        }
         public async Task SaveAsync(ISagaState state, CancellationToken cancellationToken = default)
         {
             const string sql = @"

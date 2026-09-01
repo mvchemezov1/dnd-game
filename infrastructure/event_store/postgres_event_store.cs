@@ -145,11 +145,11 @@ namespace dnd_game.infrastructure.event_store
 
             int nextVersion;
             await using (var lockCmd = new NpgsqlCommand(@"
-        SELECT version FROM events
-        WHERE aggregate_id = @aggId
-        ORDER BY version DESC LIMIT 1
-        FOR UPDATE
-    ", conn, tx))
+                SELECT version FROM events
+                WHERE aggregate_id = @aggId
+                ORDER BY version DESC LIMIT 1
+                FOR UPDATE
+            ", conn, tx))
             {
                 lockCmd.Parameters.AddWithValue("aggId", NpgsqlDbType.Uuid, aggregate.Id);
                 var currentMaxVersionObj = await lockCmd.ExecuteScalarAsync(cancellationToken);
@@ -162,6 +162,16 @@ namespace dnd_game.infrastructure.event_store
                         aggregate.Id, aggregate.OriginalVersion, currentMaxVersion);
                     _metrics.IncrementCounter("dnd.eventstore.concurrency_conflict");
                     throw new StateConflictException(aggregate.Id, aggregate.OriginalVersion, currentMaxVersion);
+                }
+
+                Guid effectiveSessionId = metadataTemplate.GameSessionId;
+                if (effectiveSessionId == Guid.Empty)
+                {
+                    var currentContext = CommandContextAccessor.Current;
+                    if (currentContext != null && currentContext.GameSessionId != Guid.Empty)
+                    {
+                        effectiveSessionId = currentContext.GameSessionId;
+                    }
                 }
 
                 nextVersion = currentMaxVersion + 1;

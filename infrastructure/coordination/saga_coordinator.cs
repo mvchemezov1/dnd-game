@@ -80,19 +80,18 @@ namespace dnd_game.infrastructure.coordination
             var factories = _registry.GetFactoriesForEvent(@event.GetType());
             foreach (var factory in factories)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 var saga = factory(@event);
                 if (saga == null) continue;
 
                 if (saga is ICommandingSaga commandingSaga)
-                {
                     commandingSaga.SetCommandBus(_commandBus);
-                }
 
+                // Загружаем текущее состояние (если есть)
                 var state = await _stateRepository.LoadAsync(saga.SagaId, cancellationToken);
                 if (state != null)
-                {
                     saga.LoadState(state);
-                }
 
                 var correlationId = state?.CorrelationId ?? saga.SagaId;
                 string lockKey = LockKeyFactory.ForSaga(correlationId);
@@ -111,12 +110,37 @@ namespace dnd_game.infrastructure.coordination
 
                 try
                 {
-                    // Обработка события
-                    await saga.Handle(@event, cancellationToken);
+                    bool saved = false;
+                    int attempt = 0;
+                    const int maxAttempts = 3;
 
-                    // Атомарное обновление версии и сохранение под блокировкой
-                    saga.State.Version++;
-                    await _stateRepository.SaveAsync(saga.State, cancellationToken);
+                    while (!saved && attempt < maxAttempts)
+                    {
+                        attempt++;
+                        // Обрабатываем событие
+                        await saga.Handle(@event, cancellationToken);
+
+                        // Увеличиваем версию
+                        int expectedVersion = saga.State.Version;
+                        saga.State.Version++;
+
+                        // Пытаемся сохранить с проверкой версии
+                        saved = await _stateRepository.TrySaveAsync(saga.State, expectedVersion, cancellationToken);
+
+                        if (!saved)
+                        {
+                            _logger.LogWarning("Конфликт версий при сохранении саги {SagaId}, попытка {Attempt}.", saga.SagaId, attempt);
+                            // Перезагружаем актуальное состояние и повторяем
+                            var latestState = await _stateRepository.LoadAsync(saga.SagaId, cancellationToken);
+                            if (latestState != null)
+                                saga.LoadState(latestState);
+                        }
+                    }
+
+                    if (!saved)
+                    {
+                        throw new InvalidOperationException($"Не удалось сохранить сагу {saga.SagaId} после {maxAttempts} попыток из-за конфликтов версий.");
+                    }
 
                     _logger.LogInformation("Сага {SagaId} успешно обработала событие {EventType}.", saga.SagaId, @event.GetType().Name);
                 }
