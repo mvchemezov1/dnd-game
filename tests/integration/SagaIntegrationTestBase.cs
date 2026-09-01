@@ -69,9 +69,12 @@ namespace dnd_game.tests.integration
                 CharacterProjection));
 
             // Правильное создание InMemoryLockManager с моком PermissionChecker
-            var permissionCheckerMock = new Mock<PermissionChecker>();
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>()
+            );
             var lockManager = new InMemoryLockManager(
-                permissionCheckerMock.Object,
+                permissionChecker,
                 NullLogger<InMemoryLockManager>.Instance);
 
             Coordinator = new SagaCoordinator(

@@ -62,9 +62,12 @@ namespace dnd_game.tests.unit
                 characterProjection
             ));
 
-            var permissionCheckerMock = new Mock<PermissionChecker>();
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>()
+            );
             var lockManager = new InMemoryLockManager(
-                permissionCheckerMock.Object,
+                permissionChecker,
                 NullLogger<InMemoryLockManager>.Instance);
 
             var coordinator = new SagaCoordinator(

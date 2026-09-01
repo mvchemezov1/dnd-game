@@ -22,14 +22,16 @@ namespace dnd_game.tests.unit
         {
             serviceProviderMock = new Mock<IServiceProvider>();
             var eventStoreMock = new Mock<IEventStore>();
-            serviceProviderMock
-                .Setup(sp => sp.GetService(typeof(IEventStore)))
-                .Returns(eventStoreMock.Object);
+            eventStoreMock.Setup(es => es.Load<CharacterAggregate>(It.IsAny<Guid>(), It.IsAny<CancellationToken>()))
+                          .ReturnsAsync((CharacterAggregate?)null);
 
             // Создаём замоканный PermissionChecker для InMemoryLockManager
-            var permissionCheckerMock = new Mock<PermissionChecker>();
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>()
+            );
             var lockManager = new InMemoryLockManager(
-                permissionCheckerMock.Object,
+                permissionChecker,
                 NullLogger<InMemoryLockManager>.Instance);
 
             var logger = NullLogger<ConsistencyManager>.Instance;

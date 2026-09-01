@@ -29,9 +29,11 @@ namespace dnd_game.tests.integration
             var serviceProviderMock = new Mock<IServiceProvider>();
             serviceProviderMock.Setup(sp => sp.GetService(typeof(IEventStore))).Returns((IEventStore?)null);
 
-            var permissionCheckerMock = new Mock<PermissionChecker>();
-            var lockManager = new InMemoryLockManager(
-                permissionCheckerMock.Object,
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>()
+            );
+            var lockManager = new InMemoryLockManager(permissionChecker,
                 NullLogger<InMemoryLockManager>.Instance);
 
             var loggerMock = new Mock<ILogger<ConsistencyManager>>();

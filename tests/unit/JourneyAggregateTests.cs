@@ -16,11 +16,11 @@ namespace dnd_game.tests.unit
         }
 
         [Fact]
-        public void AdvanceDay_IncrementsDay()
+        public void AdvanceDay_IncrementsHour()
         {
             var journey = new JourneyAggregate(Guid.NewGuid(), Guid.NewGuid(), "Normal");
             journey.AdvanceDay("Forest", 8, 10);
-            Assert.Equal(2, journey.CurrentDay);
+            Assert.Equal(1, journey.CurrentDay);
             Assert.Equal(8, journey.CurrentHour);
         }
 

@@ -34,14 +34,18 @@ public class CampaignHandlerTests
             .Setup(es => es.Load<CampaignAggregate>(campaignId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(campaign);
 
-        var command = new CreateQuestCommand(
-            campaignId,
-            questId,
-            "Slay the Dragon",
-            "Description",
-            new List<QuestObjectiveData>(),
-            new List<QuestRewardData>(),
-            new List<Guid>());
+        var objectives = new List<QuestObjectiveData>
+        {
+            new QuestObjectiveData { Description = "Test objective", RequiredProgress = 1 }
+        };
+                var command = new CreateQuestCommand(
+                    campaignId,
+                    questId,
+                    "Slay the Dragon",
+                    "Description",
+                    objectives,
+                    new List<QuestRewardData>(),
+                    new List<Guid>());
 
         // Act
         await _handler.Handle(command, CancellationToken.None);

@@ -66,9 +66,12 @@ namespace dnd_game.tests.unit
             registry = new SagaRegistry();
             registry.Register<StepEvent>(e => new StepProcessingSaga(e.CorrelationId));
 
-            var permissionCheckerMock = new Mock<PermissionChecker>();
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>()
+            );
             var lockManager = new InMemoryLockManager(
-                permissionCheckerMock.Object,
+                permissionChecker,
                 NullLogger<InMemoryLockManager>.Instance);
 
             return new SagaCoordinator(
