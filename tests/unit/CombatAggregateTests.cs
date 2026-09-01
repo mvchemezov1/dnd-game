@@ -72,6 +72,7 @@ namespace dnd_game.tests.unit
             combat.RollInitiative(p1, 10, 1);
             combat.RollInitiative(p2, 20, 3);
             combat.StartRound();
+            combat.StartTurn(p1); // <-- добавьте эту строку
 
             combat.UseMovement(p1, 20);
 
@@ -86,6 +87,7 @@ namespace dnd_game.tests.unit
             combat.RollInitiative(p1, 10, 1);
             combat.RollInitiative(p2, 20, 3);
             combat.StartRound();
+            combat.StartTurn(p1); // <-- добавьте эту строку
 
             combat.UseMovement(p1, 15);
             combat.UseMovement(p1, 15); // ровно 30 — должно пройти
