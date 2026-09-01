@@ -1,14 +1,8 @@
 // js/views/auth.js
-// Модуль экрана аутентификации: вход и регистрация.
-// Обеспечивает переключение вкладок, валидацию форм, обработку ошибок и доступность.
-
+// Модуль экрана аутентификации: вход, регистрация, восстановление и смена пароля.
 'use strict';
 
 (function () {
-    /**
-     * Инициализирует экран авторизации.
-     * @param {Function} onSuccess - колбэк, вызываемый после успешного входа/регистрации
-     */
     function initAuthScreen(onSuccess) {
         const tabs = document.querySelectorAll('#auth-tabs .tab');
         const loginForm = document.getElementById('login-form');
@@ -24,16 +18,27 @@
         // Добавляем поле подтверждения пароля в форму регистрации, если его нет
         ensureConfirmPasswordField(registerForm);
 
-        // Переменная для предотвращения двойной отправки
+        // Добавляем ссылку "Забыли пароль?" под формой входа
+        if (!loginForm.querySelector('#forgot-password-link')) {
+            const link = document.createElement('a');
+            link.id = 'forgot-password-link';
+            link.href = '#';
+            link.textContent = 'Забыли пароль?';
+            link.style.marginTop = '8px';
+            link.addEventListener('click', (e) => {
+                e.preventDefault();
+                openForgotPasswordModal();
+            });
+            loginForm.appendChild(link);
+        }
+
         let isSubmitting = false;
 
-        // ===================== Переключение вкладок =====================
         tabs.forEach(tab => {
             tab.addEventListener('click', () => switchTab(tab));
         });
 
         function switchTab(activeTab) {
-            // Обновляем классы и ARIA-атрибуты
             tabs.forEach(tab => {
                 const isActive = tab === activeTab;
                 tab.classList.toggle('active', isActive);
@@ -45,7 +50,6 @@
             loginForm.classList.toggle('hidden', !showLogin);
             registerForm.classList.toggle('hidden', showLogin);
 
-            // Сбрасываем ошибки и фокус
             clearErrors();
             if (showLogin) {
                 const firstInput = loginForm.querySelector('input');
@@ -56,7 +60,6 @@
             }
         }
 
-        // ===================== Обработка формы входа =====================
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (isSubmitting) return;
@@ -66,7 +69,6 @@
             const username = (fd.get('username') || '').trim();
             const password = fd.get('password') || '';
 
-            // Клиентская валидация
             if (!username || !password) {
                 showError(loginError, 'Введите имя пользователя и пароль');
                 return;
@@ -77,7 +79,6 @@
             }, onSuccess, loginError);
         });
 
-        // ===================== Обработка формы регистрации =====================
         registerForm.addEventListener('submit', async (e) => {
             e.preventDefault();
             if (isSubmitting) return;
@@ -89,7 +90,6 @@
             const password = fd.get('password') || '';
             const confirmPassword = fd.get('confirmPassword') || '';
 
-            // Валидация
             const validationError = validateRegistration(username, email, password, confirmPassword);
             if (validationError) {
                 showError(registerError, validationError);
@@ -101,11 +101,6 @@
             }, onSuccess, registerError);
         });
 
-        // ===================== Вспомогательные функции =====================
-
-        /**
-         * Добавляет поле подтверждения пароля в форму регистрации.
-         */
         function ensureConfirmPasswordField(form) {
             if (form.querySelector('input[name="confirmPassword"]')) return;
 
@@ -121,15 +116,10 @@
             input.required = true;
 
             label.appendChild(input);
-            // Вставляем перед кнопкой отправки
             const submitBtn = form.querySelector('button[type="submit"]');
             form.insertBefore(label, submitBtn);
         }
 
-        /**
-         * Проверяет данные регистрации.
-         * @returns {string|null} сообщение об ошибке или null, если всё корректно
-         */
         function validateRegistration(username, email, password, confirmPassword) {
             if (!username) return 'Введите имя пользователя';
             if (username.length < 3) return 'Имя пользователя должно содержать минимум 3 символа';
@@ -148,13 +138,6 @@
             return null;
         }
 
-        /**
-         * Выполняет асинхронное действие с индикацией загрузки и блокировкой формы.
-         * @param {HTMLFormElement} form - форма, которая отправляется
-         * @param {Function} action - асинхронная функция действия (логин/регистрация)
-         * @param {Function} onSuccess - колбэк успеха
-         * @param {HTMLElement} errorEl - элемент для вывода ошибки
-         */
         async function submitWithLoading(form, action, onSuccess, errorEl) {
             isSubmitting = true;
             const submitBtn = form.querySelector('button[type="submit"]');
@@ -164,7 +147,6 @@
 
             try {
                 await action();
-                // Успех — вызываем общий колбэк
                 onSuccess();
             } catch (err) {
                 showError(errorEl, err.message || 'Не удалось выполнить операцию');
@@ -175,17 +157,11 @@
             }
         }
 
-        /**
-         * Отображает сообщение об ошибке.
-         */
         function showError(el, message) {
             el.textContent = message;
             el.classList.add('visible');
         }
 
-        /**
-         * Очищает сообщения об ошибках.
-         */
         function clearErrors() {
             loginError.textContent = '';
             loginError.classList.remove('visible');
@@ -193,11 +169,100 @@
             registerError.classList.remove('visible');
         }
 
-        // Инициализация активной вкладки по умолчанию (вход)
         const defaultTab = document.querySelector('#auth-tabs .tab[data-tab="login"]');
         if (defaultTab) switchTab(defaultTab);
     }
 
+    // Функция восстановления пароля (forgot-password)
+    function openForgotPasswordModal() {
+        openModal({
+            title: 'Восстановление пароля',
+            bodyHtml: `
+                <div class="stack">
+                    ${UI.field('Email', '<input data-field="email" type="email">')}
+                </div>`,
+            actions: [
+                { label: 'Отмена', className: 'btn', onClick: closeModal },
+                {
+                    label: 'Отправить', className: 'btn btn-primary',
+                    onClick: async (ev) => {
+                        const box = ev.target.closest('.modal-box');
+                        const data = UI.collectFields(box);
+                        if (!data.email) { toast('Введите email', 'error'); return; }
+                        try {
+                            await Api.post('/api/auth/forgot-password', { email: data.email });
+                            toast('Инструкция отправлена на email', 'success');
+                            closeModal();
+                        } catch (e) { notifyError(e); }
+                    }
+                }
+            ]
+        });
+    }
+
+    // Функция сброса пароля по токену (reset-password)
+    function openResetPasswordModal(token) {
+        openModal({
+            title: 'Сброс пароля',
+            bodyHtml: `
+                <div class="stack">
+                    ${UI.field('Новый пароль', '<input data-field="newPassword" type="password">')}
+                    <input type="hidden" data-field="token" value="${token}">
+                    <div class="hint">Минимум 8 символов, заглавная и строчная буква, цифра и спецсимвол.</div>
+                </div>`,
+            actions: [
+                { label: 'Отмена', className: 'btn', onClick: closeModal },
+                {
+                    label: 'Сбросить', className: 'btn btn-primary',
+                    onClick: async (ev) => {
+                        const box = ev.target.closest('.modal-box');
+                        const data = UI.collectFields(box);
+                        if (!data.newPassword) { toast('Введите пароль', 'error'); return; }
+                        try {
+                            await Api.post('/api/auth/reset-password', { token: data.token, newPassword: data.newPassword });
+                            toast('Пароль изменён', 'success');
+                            closeModal();
+                            Store.setRoute('login');
+                        } catch (e) { notifyError(e); }
+                    }
+                }
+            ]
+        });
+    }
+
+    // Функция смены пароля (change-password)
+    function openChangePasswordModal() {
+        openModal({
+            title: 'Смена пароля',
+            bodyHtml: `
+                <div class="stack">
+                    ${UI.field('Текущий пароль', '<input data-field="currentPassword" type="password">')}
+                    ${UI.field('Новый пароль', '<input data-field="newPassword" type="password">')}
+                </div>`,
+            actions: [
+                { label: 'Отмена', className: 'btn', onClick: closeModal },
+                {
+                    label: 'Сменить', className: 'btn btn-primary',
+                    onClick: async (ev) => {
+                        const box = ev.target.closest('.modal-box');
+                        const data = UI.collectFields(box);
+                        if (!data.currentPassword || !data.newPassword) { toast('Заполните все поля', 'error'); return; }
+                        try {
+                            await Api.post('/api/auth/change-password', data);
+                            toast('Пароль изменён', 'success');
+                            closeModal();
+                            Api.logout();
+                            Store.setRoute('login');
+                        } catch (e) { notifyError(e); }
+                    }
+                }
+            ]
+        });
+    }
+
     window.Views = window.Views || {};
     window.Views.initAuthScreen = initAuthScreen;
+    window.Views.openChangePasswordModal = openChangePasswordModal;
+    window.Views.openForgotPasswordModal = openForgotPasswordModal;
+    window.Views.openResetPasswordModal = openResetPasswordModal;
 })();

@@ -52,6 +52,7 @@ namespace dnd_game.presentation.api
             services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
             services.Configure<TokenSettings>(configuration.GetSection("Token"));
             services.Configure<RateLimitConfiguration>(configuration.GetSection("RateLimiting"));
+            services.Configure<SmtpSettings>(configuration.GetSection("Smtp"));
 
             var tokenSecret = configuration["Token:Secret"];
             if (string.IsNullOrWhiteSpace(tokenSecret) ||
@@ -66,37 +67,20 @@ namespace dnd_game.presentation.api
             // Уведомления
             services.AddSingleton<INotificationService, InMemoryNotificationService>();
 
-            // Регистрируем IConnectionMultiplexer для Redis
-            services.AddSingleton<IConnectionMultiplexer>(sp =>
-            {
-                var redisConnectionString = configuration.GetConnectionString("Redis");
-                if (string.IsNullOrEmpty(redisConnectionString))
-                    throw new InvalidOperationException("Строка подключения Redis (ConnectionStrings:Redis) не задана.");
-
-                var options = ConfigurationOptions.Parse(redisConnectionString);
-                options.AbortOnConnectFail = false;
-                options.ConnectTimeout = 2000;
-                options.SyncTimeout = 2000;
-
-                var connection = ConnectionMultiplexer.Connect(options);
-                if (!connection.IsConnected)
-                    throw new InvalidOperationException("Не удалось подключиться к Redis.");
-                return connection;
-            });
-
             // 2. HTTP-контекст
             services.AddHttpContextAccessor();
 
-            // 3. Кэширование
-            services.AddSingleton<ICacheProvider>(sp =>
+            // 3. Строка подключения PostgreSQL
+            var connString = configuration.GetConnectionString("DefaultConnection");
+            if (string.IsNullOrEmpty(connString))
+                throw new InvalidOperationException("Строка подключения 'DefaultConnection' не задана.");
+
+            // 4. Redis: регистрируем IConnectionMultiplexer только если задана строка подключения
+            services.AddSingleton<IConnectionMultiplexer?>(sp =>
             {
                 var redisConnectionString = configuration.GetConnectionString("Redis");
                 if (string.IsNullOrEmpty(redisConnectionString))
-                {
-                    sp.GetRequiredService<ILogger<ICacheProvider>>()
-                      .LogWarning("Строка подключения Redis не задана, используется NoOpCacheProvider.");
-                    return new NoOpCacheProvider();
-                }
+                    return null;
 
                 try
                 {
@@ -104,30 +88,29 @@ namespace dnd_game.presentation.api
                     options.AbortOnConnectFail = false;
                     options.ConnectTimeout = 2000;
                     options.SyncTimeout = 2000;
-
-                    var redis = ConnectionMultiplexer.Connect(options);
-                    if (!redis.IsConnected) throw new InvalidOperationException("Не удалось подключиться к Redis.");
-
-                    var db = redis.GetDatabase();
-                    if (db.Ping().TotalMilliseconds > 1000)
-                        throw new InvalidOperationException("Redis не отвечает в пределах разумного времени.");
-
-                    return new RedisCacheProvider(redis);
+                    var connection = ConnectionMultiplexer.Connect(options);
+                    return connection;
                 }
-                catch (Exception ex)
+                catch
                 {
-                    sp.GetRequiredService<ILogger<ICacheProvider>>()
-                      .LogWarning(ex, "Redis недоступен, используется NoOpCacheProvider.");
-                    return new NoOpCacheProvider();
+                    return null;
                 }
             });
 
-            // 4. Строка подключения
-            var connString = configuration.GetConnectionString("DefaultConnection");
-            if (string.IsNullOrEmpty(connString))
-                throw new InvalidOperationException("Строка подключения 'DefaultConnection' не задана.");
+            // 5. Кэширование
+            services.AddSingleton<ICacheProvider>(sp =>
+            {
+                var redis = sp.GetService<IConnectionMultiplexer?>();
+                if (redis == null || !redis.IsConnected)
+                {
+                    sp.GetRequiredService<ILogger<ICacheProvider>>()
+                      .LogWarning("Redis недоступен, используется NoOpCacheProvider.");
+                    return new NoOpCacheProvider();
+                }
+                return new RedisCacheProvider(redis);
+            });
 
-            // 5. Персистентные репозитории (PostgreSQL)
+            // 6. Персистентные репозитории (PostgreSQL)
             services.AddSingleton<IUserRepository>(sp => new PostgresUserRepository(connString, sp.GetRequiredService<ILogger<PostgresUserRepository>>()));
             services.AddSingleton<IRefreshTokenStore>(sp => new PostgresRefreshTokenStore(connString, sp.GetRequiredService<ILogger<PostgresRefreshTokenStore>>()));
             services.AddSingleton<ICharacterOwnershipRepository>(sp => new PostgresCharacterOwnershipRepository(connString, sp.GetRequiredService<ILogger<PostgresCharacterOwnershipRepository>>()));
@@ -140,21 +123,17 @@ namespace dnd_game.presentation.api
             services.AddSingleton<ISagaStateRepository>(sp => new PostgresSagaStateRepository(connString, sp.GetRequiredService<ILogger<PostgresSagaStateRepository>>()));
             services.AddSingleton<ITradeRepository>(sp => new PostgresTradeRepository(connString, sp.GetRequiredService<ILogger<PostgresTradeRepository>>()));
             services.AddSingleton<ITradeOfferRepository>(sp => new PostgresTradeOfferRepository(connString, sp.GetRequiredService<ILogger<PostgresTradeOfferRepository>>()));
-            services.AddSingleton<TradeSeeder>(sp =>
-            new TradeSeeder(
-                connString,
-                sp.GetRequiredService<ILogger<TradeSeeder>>()
-            ));
+            services.AddSingleton<TradeSeeder>(sp => new TradeSeeder(connString, sp.GetRequiredService<ILogger<TradeSeeder>>()));
             services.AddSingleton<IQuestTrackingStore>(sp => new PostgresQuestTrackingStore(connString, sp.GetRequiredService<ILogger<PostgresQuestTrackingStore>>()));
             services.AddSingleton<IDialogueRepository>(sp => new PostgresDialogueRepository(connString, sp.GetRequiredService<ILogger<PostgresDialogueRepository>>()));
             services.AddSingleton<IDialogueStateRepository>(sp => new PostgresDialogueStateRepository(connString, sp.GetRequiredService<ILogger<PostgresDialogueStateRepository>>()));
             services.AddSingleton<IScriptRepository>(sp => new PostgresScriptRepository(connString, sp.GetRequiredService<ILogger<PostgresScriptRepository>>()));
 
-            // 6. In-memory (для разработки/специфичных случаев)
+            // 7. In-memory (для разработки/специфичных случаев)
             services.AddSingleton<IReplayEventStore, InMemoryReplayEventStore>();
             services.AddSingleton<IConditionEvaluator, ConditionEvaluator>();
 
-            // 7. Снимки
+            // 8. Снимки
             services.AddSingleton<ISnapshotStore>(sp =>
             {
                 var snapshotConfig = new SnapshotConfiguration
@@ -166,41 +145,50 @@ namespace dnd_game.presentation.api
                 return new SnapshotStore(connString, snapshotConfig);
             });
 
-            // 8. Блокировки
+            // 9. Блокировки
             services.AddSingleton<IDistributedLockManager>(sp =>
             {
-                var redisConnectionString = configuration.GetConnectionString("Redis");
-                if (!string.IsNullOrEmpty(redisConnectionString))
+                var redis = sp.GetService<IConnectionMultiplexer?>();
+                if (redis != null && redis.IsConnected)
                 {
-                    try
-                    {
-                        var redis = sp.GetRequiredService<IConnectionMultiplexer>();
-                        if (redis.IsConnected)
-                        {
-                            return new RedisDistributedLockManager(
-                                redis,
-                                sp.GetRequiredService<PermissionChecker>(),
-                                sp.GetRequiredService<ILogger<RedisDistributedLockManager>>());
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        sp.GetRequiredService<ILogger<IDistributedLockManager>>()
-                          .LogWarning(ex, "Не удалось использовать Redis для блокировок, переключаемся на InMemoryLockManager.");
-                    }
+                    return new RedisDistributedLockManager(
+                        redis,
+                        sp.GetRequiredService<PermissionChecker>(),
+                        sp.GetRequiredService<ILogger<RedisDistributedLockManager>>());
                 }
-
+                sp.GetRequiredService<ILogger<IDistributedLockManager>>()
+                  .LogWarning("Redis недоступен, используется InMemoryLockManager.");
                 return new InMemoryLockManager(
                     sp.GetRequiredService<PermissionChecker>(),
                     sp.GetRequiredService<ILogger<InMemoryLockManager>>());
             });
 
             services.AddSingleton<ICommandPipelineBehavior, CommandAuthorizationBehavior>();
+
+            // 10. Идемпотентность
+            services.AddSingleton<IIdempotencyStore>(sp =>
+            {
+                var redis = sp.GetService<IConnectionMultiplexer?>();
+                if (redis != null && redis.IsConnected)
+                    return new RedisIdempotencyStore(redis);
+                return new InMemoryIdempotencyStore();
+            });
+
+            // 11. Чёрный список access-токенов
             services.AddSingleton<IAccessTokenBlacklist>(sp =>
-            new RedisAccessTokenBlacklist(sp.GetRequiredService<IConnectionMultiplexer>()));
+            {
+                var redis = sp.GetService<IConnectionMultiplexer?>();
+                if (redis != null && redis.IsConnected)
+                    return new RedisAccessTokenBlacklist(redis);
+                // Если Redis нет, используем простую in-memory заглушку.
+                // Для простоты можно вернуть заглушку, которая ничего не делает.
+                return new InMemoryAccessTokenBlacklist();
+            });
+
+            // 12. Диспетчер WebSocket-событий
             services.AddSingleton<WebSocketEventDispatcher>();
 
-            // 9. Менеджер согласованности
+            // 13. Менеджер согласованности
             services.AddSingleton<IConsistencyManager>(sp =>
                 new ConsistencyManager(
                     sp,
@@ -208,7 +196,7 @@ namespace dnd_game.presentation.api
                     sp.GetRequiredService<ILogger<ConsistencyManager>>(),
                     sp.GetRequiredService<IMetricsCollector>()));
 
-            // 10. Event Store
+            // 14. Event Store
             services.AddSingleton<IEventStore>(sp =>
                 new PostgresEventStore(
                     connString,
@@ -218,7 +206,7 @@ namespace dnd_game.presentation.api
                     sp.GetRequiredService<IMetricsCollector>(),
                     sp.GetRequiredService<IEventBus>()));
 
-            // 11. Проекции
+            // 15. Проекции
             services.AddSingleton<CharacterProjection>();
             services.AddSingleton<CombatProjection>(sp =>
                 new CombatProjection(
@@ -228,28 +216,24 @@ namespace dnd_game.presentation.api
             services.AddSingleton<CampaignProjection>();
             services.AddSingleton<JourneyProjection>();
 
-            services.AddSingleton<IIdempotencyStore>(sp =>
-            {
-                var redis = sp.GetService<IConnectionMultiplexer>();
-                if (redis != null)
-                    return new RedisIdempotencyStore(redis);
-                return new InMemoryIdempotencyStore();
-            });
-
+            // 16. Outbox Processor
             services.AddHostedService(sp => new OutboxProcessor(
-            sp,
-            connString,
-            sp.GetRequiredService<ILogger<OutboxProcessor>>()));
+                sp,
+                connString,
+                sp.GetRequiredService<ILogger<OutboxProcessor>>()));
 
-            // 12. Обработчики запросов
+            // 17. Обработчики запросов
             services.AddSingleton<CharacterQueryHandler>();
             services.AddSingleton<CombatQueryHandler>();
             services.AddSingleton<CampaignQueryHandler>();
             services.AddSingleton<JourneyQueryHandler>();
             RegisterQueryHandlers(services);
 
-            // 13. Шина сообщений
-            services.AddSingleton<InMemoryBus>(sp => new InMemoryBus(sp, sp.GetRequiredService<ILogger<InMemoryBus>>()));
+            // 18. Шина сообщений
+            services.AddSingleton<InMemoryBus>(sp => new InMemoryBus(
+                sp,
+                sp.GetRequiredService<ILogger<InMemoryBus>>(),
+                sp.GetRequiredService<IIdempotencyStore>()));
             services.AddSingleton<IQueryBus>(sp => sp.GetRequiredService<InMemoryBus>());
 
             services.AddSingleton<RabbitMqBus>(sp =>
@@ -270,7 +254,7 @@ namespace dnd_game.presentation.api
             services.AddSingleton<ICommandBus>(sp => sp.GetRequiredService<MessageBusSelector>().CommandBus);
             services.AddSingleton<IEventBus>(sp => sp.GetRequiredService<MessageBusSelector>().EventBus);
 
-            // 14. Обработчики команд (классы)
+            // 19. Обработчики команд
             services.AddSingleton<CharacterHandler>();
             services.AddSingleton<MovementHandler>();
             services.AddSingleton<RestHandler>();
@@ -279,11 +263,20 @@ namespace dnd_game.presentation.api
             services.AddSingleton<TravelHandler>();
             RegisterCommandHandlers(services);
 
-            services.Configure<SmtpSettings>(configuration.GetSection("Smtp"));
-            services.AddSingleton<IEmailSender, SmtpEmailSender>();
+            // 20. SMTP и восстановление пароля
+            services.AddSingleton<IEmailSender>(sp =>
+            {
+                var smtpSettings = sp.GetRequiredService<IOptions<SmtpSettings>>().Value;
+                if (string.IsNullOrEmpty(smtpSettings.Host) || smtpSettings.Host == "smtp.yourserver.com")
+                {
+                    return new LogEmailSender(sp.GetRequiredService<ILogger<LogEmailSender>>());
+                }
+                return new SmtpEmailSender(Options.Create(smtpSettings), sp.GetRequiredService<ILogger<SmtpEmailSender>>());
+            });
             services.AddSingleton<PostgresPasswordResetTokenStore>(sp =>
                 new PostgresPasswordResetTokenStore(connString, sp.GetRequiredService<ILogger<PostgresPasswordResetTokenStore>>()));
-            // 15. Обработчики событий
+
+            // 21. Обработчики событий
             services.AddSingleton<LoggingHandler>();
             services.AddSingleton<MetricHandler>();
             services.AddSingleton<NotificationHandler>();
@@ -292,18 +285,18 @@ namespace dnd_game.presentation.api
             services.AddSingleton<TriggerHandler>();
             services.AddSingleton<WebhookHandler>();
 
-            // 16. Саги
+            // 22. Саги
             services.AddSingleton<ISagaRegistry, SagaRegistry>();
             services.AddSingleton<SagaCoordinator>();
             services.AddSingleton<ISagaDispatcher>(sp => sp.GetRequiredService<SagaCoordinator>());
 
-            // 17. Сервисы приложения (без CombatService, он не используется)
+            // 23. Сервисы приложения
             services.AddSingleton<CraftingService>();
             services.AddSingleton<DialogService>();
             services.AddSingleton<TradeService>();
             services.AddSingleton<TravelService>();
 
-            // 18. Безопасность
+            // 24. Безопасность
             services.AddSingleton<IPasswordHasher, PasswordHasher>();
             services.AddSingleton<IAuthProvider, AuthProvider>();
             services.AddSingleton<ITokenService, TokenService>();
@@ -311,16 +304,16 @@ namespace dnd_game.presentation.api
             services.AddSingleton<PolicyEnforcer>();
             services.AddSingleton<IUserSecurityContextProvider, HttpUserSecurityContextProvider>();
 
-            // 19. AI и восприятие
+            // 25. AI и восприятие
             services.AddSingleton<IBlackboardStore, BlackboardStore>();
             services.AddSingleton<MonsterAi>();
             services.AddSingleton<PerceptionPipeline>();
             services.AddSingleton<ScriptEngine>();
 
-            // 20. Undo/Redo
+            // 26. Undo/Redo
             services.AddSingleton<UndoManager>();
 
-            // 21. Локализация (регистрируем LocaleManager и интерфейс один раз)
+            // 27. Локализация
             services.AddSingleton<ILocaleProvider>(sp =>
             {
                 var localesPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Resources", "Locales");
@@ -329,17 +322,22 @@ namespace dnd_game.presentation.api
             services.AddSingleton<LocaleManager>();
             services.AddSingleton<ILocaleManager>(sp => sp.GetRequiredService<LocaleManager>());
 
-            // 22. Мониторинг
+            // 28. Мониторинг
             services.AddSingleton<IMetricsCollector, MetricsCollector>();
             services.AddSingleton<ITracer>(sp => new SimpleTracer(sp.GetRequiredService<ILogger<SimpleTracer>>()));
             services.AddSingleton<IHealthCheck, DndHealthCheck>();
 
-            // 23. Сетевые компоненты
+            // 29. Сетевые компоненты
             services.AddSingleton<INetworkProtocol, JsonNetworkProtocol>();
             services.AddSingleton<IRateLimiter, RateLimiter>();
+            services.AddSingleton<ISessionManager>(sp =>
+                new SessionManager(
+                    sp.GetRequiredService<PermissionChecker>(),
+                    sp.GetRequiredService<ILogger<SessionManager>>(),
+                    maxPlayersPerSession: 10));
             services.AddSingleton<WebSocketHandler>();
 
-            // 24. Мировые службы
+            // 30. Мировые службы
             services.AddSingleton<IGridProvider>(sp =>
             {
                 var width = configuration.GetValue<int?>("World:GridWidth") ?? 100;
@@ -349,23 +347,23 @@ namespace dnd_game.presentation.api
             });
             services.AddSingleton<VisibilityCalculator>();
 
-            // 25. HTTP-клиент для вебхуков
+            // 31. HTTP-клиент для вебхуков
             services.AddHttpClient<IWebhookClient, DefaultWebhookClient>();
 
-            // 26. Миграции
+            // 32. Миграции
             services.AddSingleton<DatabaseMigrator>(sp =>
                 new DatabaseMigrator(connString,
                     Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "migrations"),
                     sp.GetRequiredService<ILogger<DatabaseMigrator>>()));
 
-            // 27. Фоновые сервисы
+            // 33. Фоновые сервисы
             services.AddHostedService<RefreshTokenCleanupService>();
 
-            // 28. FluentValidation
+            // 34. FluentValidation
             services.AddFluentValidationAutoValidation();
             services.AddValidatorsFromAssemblyContaining<CreateCharacterRequestValidator>();
 
-            // 29. Обработка ошибок валидации
+            // 35. Обработка ошибок валидации
             services.Configure<ApiBehaviorOptions>(options =>
             {
                 options.InvalidModelStateResponseFactory = context =>
@@ -379,7 +377,7 @@ namespace dnd_game.presentation.api
                 };
             });
 
-            // 30. DM Tools
+            // 36. DM Tools
             services.AddSingleton(sp => new DmUi(
                 sp.GetRequiredService<ICommandBus>(),
                 sp.GetRequiredService<CharacterProjection>(),
@@ -389,15 +387,14 @@ namespace dnd_game.presentation.api
             services.AddSingleton(sp => new OverrideCommands(
                 sp.GetRequiredService<ICommandBus>(),
                 sp.GetRequiredService<CharacterProjection>(),
-                sp.GetRequiredService<PermissionChecker>()
-            ));
+                sp.GetRequiredService<PermissionChecker>()));
             services.AddSingleton(sp => new DmUndoManager(
                 sp.GetRequiredService<UndoManager>(),
                 sp.GetRequiredService<ICommandBus>(),
                 sp.GetRequiredService<PermissionChecker>(),
                 sp.GetRequiredService<ILogger<DmUndoManager>>()));
 
-            // 31. Дополнительные службы для ReplayHandler
+            // 37. Дополнительные службы для ReplayHandler
             services.AddSingleton<ICurrentSessionProvider, DefaultCurrentSessionProvider>();
             services.AddSingleton<INarrativeLogBuilder, DefaultNarrativeLogBuilder>();
 

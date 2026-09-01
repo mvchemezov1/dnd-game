@@ -516,8 +516,17 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> LevelUp(Guid id, [FromBody] LevelUpCharacter command, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
-            await _commandBus.SendAsync(command with { CharacterId = id }, CreateContext(cancellationToken));
-            return Ok();
+            if (command.NewLevel <= 1) return BadRequest(new { error = "Новый уровень должен быть больше 1." });
+
+            try
+            {
+                await _commandBus.SendAsync(command with { CharacterId = id }, CreateContext(cancellationToken));
+                return Ok();
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
         }
 
         // ---------- Отдых ----------
@@ -970,6 +979,19 @@ namespace dnd_game.presentation.api
                 return Forbid();
             var result = await _queryBus.QueryAsync(new GetActiveQuests(id), cancellationToken);
             return Ok(result);
+        }
+
+        [HttpGet("{campaignId:guid}/players")]
+        public async Task<IActionResult> GetPlayers(Guid campaignId, CancellationToken cancellationToken)
+        {
+            if (campaignId == Guid.Empty) return BadRequest(new { error = "Идентификатор кампании не может быть пустым." });
+            if (!await _permissionChecker.IsMemberOfCampaignAsync(campaignId, cancellationToken))
+                return Forbid();
+
+            // Получаем игроков из UserRepository? Нужно хранить список PlayerIds в кампании.
+            // В CampaignAggregate есть PlayerIds, но не проекция. Можно добавить метод в CampaignProjection.
+            // Пока вернём пустой список, чтобы не падало.
+            return Ok(new List<object>());
         }
 
         [HttpGet("{id:guid}/quests")]

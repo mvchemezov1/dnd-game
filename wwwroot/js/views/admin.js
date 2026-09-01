@@ -1,23 +1,15 @@
 // js/views/admin.js
-// Панель администратора: глобальный поиск персонажей и доступ к мастерским инструментам.
-// Администратор обходит проверки владения на сервере, поэтому видит всех персонажей.
-
+// Панель администратора: глобальный поиск персонажей, управление пользователями.
 'use strict';
 
 (function () {
     const g = UI.g; // безопасное получение значения с учётом camelCase/PascalCase
 
-    /**
-     * Рендерит представление администратора.
-     * @param {HTMLElement} root - корневой контейнер
-     */
     async function renderAdminView(root) {
         root.innerHTML = `
-            <div class="note">
-                В бэкенде сейчас нет эндпоинтов для управления пользователями, назначения ролей
-                (Player / GameMaster / Admin) или создания кампаний — только неограниченный доступ
-                к существующим персонажам и боям. Ниже — то, что реально работает: глобальный поиск
-                и правка любого персонажа, плюс все инструменты мастера.
+            <div class="card">
+                <h2>Управление пользователями</h2>
+                <div id="users-list">${UI.loadingBlock('Загрузка пользователей…')}</div>
             </div>
 
             <div class="card">
@@ -43,15 +35,6 @@
             </div>
 
             <div id="admin-results"></div>
-
-            <div class="card">
-                <h2>Инструменты мастера</h2>
-                <p class="muted small">
-                    Как у GameMaster: обзор пати, быстрые действия, спавн NPC, трекер боя,
-                    кампания/квесты — доступны в соответствующих вкладках слева,
-                    без ограничений по владению.
-                </p>
-            </div>
         `;
 
         // Привязка действий
@@ -60,7 +43,9 @@
             reset: resetFilters
         });
 
-        // Функция сброса полей фильтрации
+        // Загружаем пользователей сразу
+        loadUsers();
+
         function resetFilters() {
             root.querySelector('#f-name').value = '';
             root.querySelector('#f-class').value = '';
@@ -72,15 +57,11 @@
             if (resultsEl) resultsEl.innerHTML = '';
         }
 
-        /**
-         * Выполняет поиск персонажей по заданным фильтрам.
-         */
         async function search() {
             const resultsEl = root.querySelector('#admin-results');
             if (!resultsEl) return;
             resultsEl.innerHTML = UI.loadingBlock('Поиск…');
 
-            // Сбор параметров
             const name = root.querySelector('#f-name').value.trim();
             const className = root.querySelector('#f-class').value.trim();
             const race = root.querySelector('#f-race').value.trim();
@@ -88,7 +69,6 @@
             const maxLvl = root.querySelector('#f-maxlvl').value.trim();
             const alive = root.querySelector('#f-alive').value;
 
-            // Валидация уровней
             if (minLvl && (isNaN(+minLvl) || +minLvl < 1 || +minLvl > 20)) {
                 toast('Минимальный уровень должен быть от 1 до 20', 'error');
                 return;
@@ -102,7 +82,6 @@
                 return;
             }
 
-            // Формирование query-параметров
             const params = new URLSearchParams();
             if (name) params.set('name', name);
             if (className) params.set('className', className);
@@ -140,9 +119,6 @@
             }
         }
 
-        /**
-         * Генерирует HTML-строку для одного найденного персонажа.
-         */
         function rowHtml(c) {
             const id = g(c, 'id');
             const name = UI.esc(g(c, 'name', '—'));
@@ -161,6 +137,106 @@
                     <td>${hitPoints}/${maxHitPoints}</td>
                     <td><button class="btn btn-sm" data-action="open" data-id="${UI.esc(id)}">Открыть</button></td>
                 </tr>`;
+        }
+
+        async function loadUsers() {
+            const container = root.querySelector('#users-list');
+            if (!container) return;
+            container.innerHTML = UI.loadingBlock('Загрузка пользователей…');
+            try {
+                const users = await Api.get('/api/users');
+                if (!users.length) {
+                    container.innerHTML = UI.emptyState('Нет пользователей.');
+                    return;
+                }
+                container.innerHTML = `
+                    <table>
+                        <thead><tr><th>Имя</th><th>Email</th><th>Роль</th><th>Статус</th><th></th></tr></thead>
+                        <tbody>
+                            ${users.map(u => `
+                                <tr>
+                                    <td>${UI.esc(u.username)}</td>
+                                    <td>${UI.esc(u.email)}</td>
+                                    <td>
+                                        <select data-action="change-role" data-user-id="${u.id}">
+                                            ${['Player', 'GameMaster', 'Admin'].map(role => `
+                                                <option value="${role}" ${role === u.globalRole ? 'selected' : ''}>${UI.roleLabel(role)}</option>
+                                            `).join('')}
+                                        </select>
+                                    </td>
+                                    <td>${u.isActive ? UI.pill('Активен', 'success') : UI.pill('Заблокирован', 'danger')}</td>
+                                    <td class="row">
+                                        <button class="btn btn-sm" data-action="toggle-status" data-user-id="${u.id}" data-active="${!u.isActive}">
+                                            ${u.isActive ? 'Заблокировать' : 'Разблокировать'}
+                                        </button>
+                                        <button class="btn btn-sm" data-action="reset-password" data-user-id="${u.id}">Сбросить пароль</button>
+                                        <button class="btn btn-sm btn-danger" data-action="delete-user" data-user-id="${u.id}">Удалить</button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>`;
+
+                UI.bindActions(container, {
+                    'change-role': async (el) => {
+                        const userId = el.dataset.userId;
+                        const newRole = el.value;
+                        await Api.put(`/api/users/${userId}/role`, { role: newRole });
+                        toast('Роль обновлена', 'success');
+                        loadUsers();
+                    },
+                    'toggle-status': async (el) => {
+                        const userId = el.dataset.userId;
+                        const isActive = el.dataset.active === 'true';
+                        await Api.put(`/api/users/${userId}/status`, { isActive });
+                        toast('Статус обновлён', 'success');
+                        loadUsers();
+                    },
+                    'reset-password': (el) => {
+                        const userId = el.dataset.userId;
+                        openResetPasswordModal(userId);
+                    },
+                    'delete-user': async (el) => {
+                        const userId = el.dataset.userId;
+                        if (await confirmDialog('Удалить пользователя?')) {
+                            await Api.del(`/api/users/${userId}`);
+                            toast('Пользователь удалён', 'success');
+                            loadUsers();
+                        }
+                    }
+                });
+            } catch (e) {
+                container.innerHTML = UI.emptyState('Ошибка загрузки пользователей.');
+                notifyError(e);
+            }
+        }
+
+        function openResetPasswordModal(userId) {
+            openModal({
+                title: 'Сброс пароля',
+                bodyHtml: `
+                    <div class="stack">
+                        ${UI.field('Новый пароль', '<input data-field="newPassword" type="password">')}
+                        <div class="hint">Минимум 8 символов, заглавная и строчная буква, цифра и спецсимвол.</div>
+                    </div>`,
+                actions: [
+                    { label: 'Отмена', className: 'btn', onClick: closeModal },
+                    {
+                        label: 'Сбросить',
+                        className: 'btn btn-primary',
+                        onClick: async (ev) => {
+                            const box = ev.target.closest('.modal-box');
+                            const data = UI.collectFields(box);
+                            if (!data.newPassword) { toast('Введите пароль', 'error'); return; }
+                            try {
+                                await Api.put(`/api/users/${userId}/password`, { newPassword: data.newPassword });
+                                closeModal();
+                                toast('Пароль сброшен', 'success');
+                            } catch (e) { notifyError(e); }
+                        }
+                    }
+                ]
+            });
         }
     }
 

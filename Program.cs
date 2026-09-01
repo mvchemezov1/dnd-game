@@ -19,7 +19,6 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Serilog;
 using Serilog.Events;
-using StackExchange.Redis;
 using System.Reflection;
 using System.Text;
 
@@ -38,6 +37,7 @@ namespace dnd_game
                 .MinimumLevel.Override("Microsoft.Hosting.Lifetime", LogEventLevel.Information)
                 .MinimumLevel.Override("System", LogEventLevel.Warning)
                 .MinimumLevel.Override("dnd_game.infrastructure.coordination.SagaCoordinator", LogEventLevel.Debug)
+                .MinimumLevel.Override("dnd_game.infrastructure.coordination.InMemoryLockManager", LogEventLevel.Debug)
                 .MinimumLevel.Override("dnd_game.presentation.api.WebSocketHandler", LogEventLevel.Information)
                 .MinimumLevel.Override("dnd_game.infrastructure.event_store.PostgresEventStore", LogEventLevel.Information)
                 .Enrich.FromLogContext()
@@ -50,12 +50,13 @@ namespace dnd_game
                 .CreateLogger();
 
             var builder = WebApplication.CreateBuilder(args);
-            // 1. Получаем секрет из конфигурации
+
+            // ============================================================
+            // 2. Конфигурация JWT
+            // ============================================================
             var jwtSecret = builder.Configuration["Token:Secret"];
             if (string.IsNullOrEmpty(jwtSecret))
-            {
                 throw new InvalidOperationException("Token:Secret is not configured.");
-            }
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret));
 
@@ -66,14 +67,14 @@ namespace dnd_game
             })
             .AddJwtBearer(options =>
             {
-                options.RequireHttpsMetadata = false; // для разработки
+                options.RequireHttpsMetadata = false;
                 options.SaveToken = true;
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
                     ValidateIssuerSigningKey = true,
                     IssuerSigningKey = key,
-                    ValidateIssuer = false, // если не проверяете издателя
-                    ValidateAudience = false, // если не проверяете аудиторию
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
                     ClockSkew = TimeSpan.Zero
                 };
             });
@@ -83,27 +84,23 @@ namespace dnd_game
                 options.AddPolicy("RequireAdmin", policy =>
                     policy.RequireRole("Admin"));
             });
+
             builder.Host.UseSerilog();
 
             // ============================================================
-            // 2. Базовые сервисы, которые не покрываются AddGameServices
+            // 3. Базовые сервисы
             // ============================================================
             builder.Services.AddHttpContextAccessor();
             builder.Services.AddSingleton<ICurrentUserService, CurrentUserService>();
+            builder.Services.AddSingleton(sp => sp.GetRequiredService<IOptions<JwtSettings>>().Value);
 
             // ============================================================
-            // 3. Основные игровые сервисы (включая EventStore, шины, проекции, обработчики, безопасность и т.д.)
+            // 4. Игровые сервисы
             // ============================================================
-            // Регистрируем JwtSettings как одиночный экземпляр (не только IOptions)
-            builder.Services.AddSingleton(sp =>
-                sp.GetRequiredService<IOptions<JwtSettings>>().Value);
-
-            // Если IDistributedLockManager не зарегистрирован в AddGameServices, добавьте здесь:
-            builder.Services.AddSingleton<IDistributedLockManager, InMemoryLockManager>();
             builder.Services.AddGameServices(builder.Configuration);
 
             // ============================================================
-            // 4. ASP.NET Core: контроллеры, валидация, обработка ошибок, Swagger
+            // 5. ASP.NET Core: контроллеры, валидация, обработка ошибок, Swagger
             // ============================================================
             builder.Services.AddControllers();
             builder.Services.AddFluentValidationAutoValidation();
@@ -152,7 +149,7 @@ namespace dnd_game
             });
 
             // ============================================================
-            // 5. CORS
+            // 6. CORS
             // ============================================================
             var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>();
             if (allowedOrigins == null || allowedOrigins.Length == 0)
@@ -187,18 +184,15 @@ namespace dnd_game
             }
 
             // ============================================================
-            // 6. Построение приложения
+            // 7. Построение приложения
             // ============================================================
             var app = builder.Build();
 
-            // =====================================================================
-            // Восстановление проекций и подписка на события при старте
-            // =====================================================================
+            // Восстановление проекций и подписка на события
             using (var scope = app.Services.CreateScope())
             {
                 var services = scope.ServiceProvider;
 
-                // Восстановление проекций
                 var eventStore = services.GetRequiredService<IEventStore>();
                 var characterProjection = services.GetRequiredService<CharacterProjection>();
                 var campaignProjection = services.GetRequiredService<CampaignProjection>();
@@ -228,36 +222,28 @@ namespace dnd_game
                 catch (Exception ex)
                 {
                     Log.Warning(ex, "Не удалось подключиться к RabbitMQ, используется InMemoryBus.");
-                    // Селектор остаётся на InMemoryBus
                 }
             }
 
-            // ============================================================
-            // 7. Миграции базы данных
-            // ============================================================
+            // Миграции
             var migrator = app.Services.GetRequiredService<DatabaseMigrator>();
             if (!migrator.Migrate())
             {
                 Log.Fatal("Database migration failed. Exiting.");
                 return;
             }
-            // Сидинг рецептов
+
+            // Сидинг
             var recipeSeeder = app.Services.GetRequiredService<RecipeSeeder>();
             await recipeSeeder.SeedAsync();
             var tradeSeeder = app.Services.GetRequiredService<TradeSeeder>();
             await tradeSeeder.SeedAsync();
 
-            // ============================================================
-            // 8. Регистрация саг и подписок проекций на события
-            // ============================================================
-            // Подписываем проекции на события
+            // Подписки проекций и саг
             ProjectionRegistrations.RegisterAll(app.Services);
-
-            // Регистрируем саги и подписываем их на события
             SagaRegistrations.RegisterAll(app.Services);
-            // ============================================================
-            // 9. Загрузка языка
-            // ============================================================
+
+            // Локализация
             app.UseStaticFiles(new StaticFileOptions
             {
                 FileProvider = new PhysicalFileProvider(
@@ -270,11 +256,16 @@ namespace dnd_game
             await localeManager.LoadLocaleAsync("en");
 
             // ============================================================
-            // 10. Middleware
+            // 8. Middleware
             // ============================================================
-            app.UseAuthentication();
-            app.UseMiddleware<UserActivityMiddleware>();
+            app.UseRouting();
+
             app.UseCors("AllowSpecificOrigins");
+
+            app.UseAuthentication();
+            app.UseMiddleware<UserActivityMiddleware>(); // проверка активности пользователя
+            app.UseAuthorization();
+
             app.UseStaticFiles();
 
             app.UseSwagger();
@@ -308,7 +299,7 @@ namespace dnd_game
             app.MapFallbackToFile("index.html");
 
             // ============================================================
-            // 11. Запуск
+            // 9. Запуск
             // ============================================================
             var url = Environment.GetEnvironmentVariable("APP_URL") ?? "http://0.0.0.0:5000";
             Log.Information("Starting application on {Url}", url);
