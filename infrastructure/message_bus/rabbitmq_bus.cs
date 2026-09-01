@@ -280,52 +280,56 @@ namespace dnd_game.infrastructure.message_bus
             if (_channel is null)
                 throw new InvalidOperationException("Шина RabbitMQ не инициализирована. Сначала вызовите InitializeAsync.");
 
-            var subscription = _eventSubscriptions.GetOrAdd(eventType, type =>
+            // Разрываем контекст синхронизации и блокируем поток без риска deadlock
+            Task.Run(() =>
             {
-                bool isBroad = type.IsInterface || type.IsAbstract;
-                string bindingKey = isBroad ? "#" : type.Name;
-                string queueName = isBroad
-                    ? $"dnd.event.broadcast.{type.Name}.{Guid.NewGuid():N}"
-                    : $"dnd.event.{type.Name}";
+                var subscription = _eventSubscriptions.GetOrAdd(eventType, type =>
+                {
+                    bool isBroad = type.IsInterface || type.IsAbstract;
+                    string bindingKey = isBroad ? "#" : type.Name;
+                    string queueName = isBroad
+                        ? $"dnd.event.broadcast.{type.Name}.{Guid.NewGuid():N}"
+                        : $"dnd.event.{type.Name}";
 
-                // Синхронное ожидание допустимо только на этапе настройки, когда нет контекста синхронизации.
-                var queueDeclareTask = _channel!.QueueDeclareAsync(
-                    queueName,
-                    durable: true,
-                    exclusive: false,
-                    autoDelete: true,
-                    arguments: new Dictionary<string, object?>
+                    // Асинхронные операции с await
+                    var queueDeclareTask = _channel!.QueueDeclareAsync(
+                        queueName,
+                        durable: true,
+                        exclusive: false,
+                        autoDelete: true,
+                        arguments: new Dictionary<string, object?>
+                        {
+                    { "x-dead-letter-exchange", DeadLetterExchange },
+                    { "x-dead-letter-routing-key", $"event.{type.Name}" }
+                        });
+                    queueDeclareTask.GetAwaiter().GetResult(); // внутри Task.Run нет контекста
+
+                    var queueBindTask = _channel.QueueBindAsync(queueName, EventExchange, bindingKey);
+                    queueBindTask.GetAwaiter().GetResult();
+
+                    var consumer = new AsyncEventingBasicConsumer(_channel);
+                    consumer.ReceivedAsync += async (sender, args) =>
                     {
-                        { "x-dead-letter-exchange", DeadLetterExchange },
-                        { "x-dead-letter-routing-key", $"event.{type.Name}" }
-                    });
-                queueDeclareTask.GetAwaiter().GetResult();
+                        await ProcessEventMessageAsync(type, args).ConfigureAwait(false);
+                    };
 
-                var queueBindTask = _channel.QueueBindAsync(queueName, EventExchange, bindingKey);
-                queueBindTask.GetAwaiter().GetResult();
+                    string consumerTag = _channel.BasicConsumeAsync(queueName, autoAck: false, consumer)
+                        .GetAwaiter()
+                        .GetResult();
 
-                var consumer = new AsyncEventingBasicConsumer(_channel);
-                consumer.ReceivedAsync += async (sender, args) =>
+                    return new EventTypeSubscription
+                    {
+                        QueueName = queueName,
+                        ConsumerTag = consumerTag,
+                        IsBroadSubscription = isBroad
+                    };
+                });
+
+                lock (subscription.Handlers)
                 {
-                    await ProcessEventMessageAsync(type, args).ConfigureAwait(false);
-                };
-
-                string consumerTag = _channel.BasicConsumeAsync(queueName, autoAck: false, consumer)
-                    .GetAwaiter()
-                    .GetResult();
-
-                return new EventTypeSubscription
-                {
-                    QueueName = queueName,
-                    ConsumerTag = consumerTag,
-                    IsBroadSubscription = isBroad
-                };
-            });
-
-            lock (subscription.Handlers)
-            {
-                subscription.Handlers.Add(handler);
-            }
+                    subscription.Handlers.Add(handler);
+                }
+            }).GetAwaiter().GetResult();
         }
 
         private void UnsubscribeInternal(

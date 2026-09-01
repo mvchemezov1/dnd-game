@@ -24,16 +24,15 @@ namespace dnd_game.infrastructure.message_bus
     /// </summary>
     public interface IQueryBus
     {
-        /// <summary>
-        /// Выполняет запрос и возвращает результат.
-        /// </summary>
-        /// <typeparam name="TResult">Тип результата запроса.</typeparam>
-        /// <param name="query">Запрос (не может быть null).</param>
-        /// <param name="context">Дополнительный контекст выполнения (может быть null).</param>
-        /// <param name="cancellationToken">Токен отмены.</param>
-        /// <returns>Результат выполнения запроса.</returns>
+        /// <summary>Выполняет запрос с известным типом результата.</summary>
         Task<TResult> QueryAsync<TResult>(
             IQuery<TResult> query,
+            QueryContext? context = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>Выполняет запрос без знания типа результата на этапе компиляции.</summary>
+        Task<object?> QueryAsyncUntyped(
+            IQuery query,
             QueryContext? context = null,
             CancellationToken cancellationToken = default);
     }
@@ -67,17 +66,11 @@ namespace dnd_game.infrastructure.message_bus
     /// </summary>
     public static class QueryBusExtensions
     {
-        /// <summary>
-        /// Выполняет запрос с явным токеном отмены.
-        /// </summary>
         public static Task<TResult> QueryAsync<TResult>(
             this IQueryBus queryBus,
             IQuery<TResult> query,
             CancellationToken cancellationToken)
         {
-            ArgumentNullException.ThrowIfNull(queryBus);
-            ArgumentNullException.ThrowIfNull(query);
-
             return queryBus.QueryAsync(query, null, cancellationToken);
         }
 
@@ -120,5 +113,6 @@ namespace dnd_game.infrastructure.message_bus
             };
             return queryBus.QueryAsync(query, context, cancellationToken);
         }
+
     }
 }

@@ -10,11 +10,13 @@ namespace dnd_game.domain.queries
     // Базовые интерфейсы запросов
     // --------------------------------------------------------------------------------------------
 
-    /// <summary>
-    /// Маркерный интерфейс запроса, возвращающего результат указанного типа.
-    /// </summary>
-    /// <typeparam name="TResult">Тип результата запроса.</typeparam>
-    public interface IQuery<TResult>
+    /// <summary>Маркерный интерфейс для всех запросов (не-генерический).</summary>
+    public interface IQuery
+    {
+    }
+
+    /// <summary>Запрос, возвращающий результат указанного типа.</summary>
+    public interface IQuery<TResult> : IQuery
     {
     }
 

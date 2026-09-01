@@ -4,8 +4,11 @@ using dnd_game.application.security;
 using dnd_game.domain.commands;
 using dnd_game.domain.queries;
 using dnd_game.infrastructure.message_bus;
+using dnd_game.infrastructure.notifications;
 using dnd_game.infrastructure.security;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Linq;
@@ -86,18 +89,35 @@ namespace dnd_game.presentation.api
             [FromBody] CreateCharacterRequest request,
             CancellationToken cancellationToken)
         {
+            if (string.IsNullOrWhiteSpace(request.Name))
+                return BadRequest(new { error = "Имя персонажа обязательно." });
+            if (request.MaxHitPoints <= 0)
+                return BadRequest(new { error = "Максимальные хиты должны быть положительными." });
+
             var characterId = Guid.NewGuid();
             var command = new CreateCharacter(characterId, request.Name, request.MaxHitPoints);
             await _commandBus.SendAsync(command, CreateContext(cancellationToken));
 
-            // Устанавливаем владельца
+            // Привязываем владельца
             var userIdClaim = User.FindFirstValue(ClaimTypes.NameIdentifier);
             if (userIdClaim != null && Guid.TryParse(userIdClaim, out var userId))
             {
                 await _ownershipRepo.AssignOwnerAsync(characterId, userId, cancellationToken);
             }
 
-            return Ok();
+            // Привязываем к кампании, если указан SessionId
+            var sessionId = SessionId; // из GameControllerBase
+            if (sessionId != Guid.Empty)
+            {
+                await _ownershipRepo.SetCampaignAsync(characterId, sessionId, cancellationToken);
+            }
+
+            if (request.IsNpc)
+            {
+                await _ownershipRepo.MarkAsNpcAsync(characterId, cancellationToken);
+            }
+
+            return CreatedAtAction(nameof(GetCharacter), new { id = characterId }, new { id = characterId });
         }
 
         /// <summary>Обновляет данные персонажа.</summary>
@@ -117,7 +137,13 @@ namespace dnd_game.presentation.api
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetCharacter(Guid id, CancellationToken cancellationToken)
         {
-            if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+            if (id == Guid.Empty)
+                return BadRequest(new { error = "Идентификатор персонажа не может быть пустым." });
+
+            // Проверяем право на просмотр
+            if (!await _permissionChecker.CanViewCharacterAsync(id, cancellationToken))
+                return NotFound();
+
             var result = await _queryBus.QueryAsync(new GetCharacterById(id), cancellationToken);
             return OkOrNotFound(result);
         }
@@ -583,15 +609,22 @@ namespace dnd_game.presentation.api
     /// </summary>
     [Route("api/[controller]")]
     [Authorize]
-    public class CombatController(ICommandBus commandBus, IQueryBus queryBus) : GameControllerBase
+    public class CombatController(ICommandBus commandBus, IQueryBus queryBus, ICharacterOwnershipRepository ownershipRepository,
+    PermissionChecker permissionChecker) : GameControllerBase
     {
         private readonly ICommandBus _commandBus = commandBus;
         private readonly IQueryBus _queryBus = queryBus;
+        private readonly ICharacterOwnershipRepository _ownershipRepository = ownershipRepository;
+        private readonly PermissionChecker _permissionChecker = permissionChecker;
 
         [HttpPost]
         public async Task<IActionResult> StartCombat([FromBody] StartCombatRequest request, CancellationToken cancellationToken)
         {
-            var command = new StartCombat(request.CombatId, request.Participants);
+            var command = new StartCombat(
+                request.CombatId,
+                request.Participants,
+                null,
+                request.PlayerCharacterIds);
             await _commandBus.SendAsync(command, CreateContext(cancellationToken));
             return Ok();
         }
@@ -815,26 +848,11 @@ namespace dnd_game.presentation.api
             return Ok();
         }
 
-        [HttpGet("{id:guid}")]
-        public async Task<IActionResult> GetCombatStatus(Guid id, CancellationToken cancellationToken)
-        {
-            if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор боя не может быть пустым." });
-            var result = await _queryBus.QueryAsync(new GetCombatStatus(id), cancellationToken);
-            return result is null ? NotFound() : Ok(result);
-        }
-
-        [HttpGet("{id:guid}/participants")]
-        public async Task<IActionResult> GetParticipants(Guid id, CancellationToken cancellationToken)
-        {
-            if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор боя не может быть пустым." });
-            var result = await _queryBus.QueryAsync(new GetCombatParticipants(id), cancellationToken);
-            return Ok(result);
-        }
-
         [HttpGet("{id:guid}/current")]
         public async Task<IActionResult> GetCurrentParticipant(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор боя не может быть пустым." });
+            if (!await CanViewCombatAsync(id, cancellationToken)) return Forbid();
             var result = await _queryBus.QueryAsync(new GetCurrentCombatParticipant(id), cancellationToken);
             return result is null ? NotFound() : Ok(result);
         }
@@ -843,6 +861,7 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetRound(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор боя не может быть пустым." });
+            if (!await CanViewCombatAsync(id, cancellationToken)) return Forbid();
             var result = await _queryBus.QueryAsync(new GetCombatRound(id), cancellationToken);
             return Ok(result);
         }
@@ -851,6 +870,7 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> GetTurnOrder(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор боя не может быть пустым." });
+            if (!await CanViewCombatAsync(id, cancellationToken)) return Forbid();
             var result = await _queryBus.QueryAsync(new GetCombatTurnOrder(id), cancellationToken);
             return Ok(result);
         }
@@ -859,8 +879,28 @@ namespace dnd_game.presentation.api
         public async Task<IActionResult> IsActive(Guid id, CancellationToken cancellationToken)
         {
             if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор боя не может быть пустым." });
+            if (!await CanViewCombatAsync(id, cancellationToken)) return Forbid();
             var result = await _queryBus.QueryAsync(new IsCombatActive(id), cancellationToken);
             return Ok(result);
+        }
+
+        private async Task<bool> CanViewCombatAsync(Guid combatId, CancellationToken ct)
+        {
+            // Администраторы и глобальные мастера видят всё
+            if (await _permissionChecker.IsGameMasterAsync(ct))
+                return true;
+
+            var status = await _queryBus.QueryAsync(new GetCombatStatus(combatId), ct);
+            if (status == null)
+                return false;
+
+            // Получаем персонажей текущего пользователя
+            var userId = UserId;
+            var ownedCharacterIds = await _ownershipRepository.GetOwnedCharacterIdsAsync(userId, ct);
+            var ownedSet = new HashSet<Guid>(ownedCharacterIds);
+
+            // Проверяем, есть ли среди участников боя персонаж, принадлежащий пользователю
+            return status.Participants.Any(p => ownedSet.Contains(p.CharacterId));
         }
     }
 
@@ -892,7 +932,13 @@ namespace dnd_game.presentation.api
         [HttpGet("{id:guid}")]
         public async Task<IActionResult> GetCampaignState(Guid id, CancellationToken cancellationToken)
         {
-            if (id == Guid.Empty) return BadRequest(new { error = "Идентификатор кампании не может быть пустым." });
+            if (id == Guid.Empty)
+                return BadRequest(new { error = "Идентификатор кампании не может быть пустым." });
+
+            // Проверяем, состоит ли пользователь в кампании
+            if (!await _permissionChecker.IsMemberOfCampaignAsync(id, cancellationToken))
+                return Forbid();
+
             var result = await _queryBus.QueryAsync(new GetCampaignState(id), cancellationToken);
             return result is null ? NotFound() : Ok(result);
         }
@@ -1064,11 +1110,25 @@ namespace dnd_game.presentation.api
     {
         private readonly IAuthProvider _authProvider;
         private readonly ITokenService _tokenService;
+        private readonly IPasswordHasher _passwordHasher;
+        private readonly IUserRepository _userRepository;
+        private readonly IEmailSender _emailSender;
+        private readonly PostgresPasswordResetTokenStore _passwordResetTokenStore;
 
-        public AuthController(IAuthProvider authProvider, ITokenService tokenService)
+        public AuthController(
+            IAuthProvider authProvider,
+            ITokenService tokenService,
+            IPasswordHasher passwordHasher,
+            IUserRepository userRepository,
+            IEmailSender emailSender,
+            PostgresPasswordResetTokenStore passwordResetTokenStore)
         {
-            _authProvider = authProvider;
-            _tokenService = tokenService;
+            _authProvider = authProvider ?? throw new ArgumentNullException(nameof(authProvider));
+            _tokenService = tokenService ?? throw new ArgumentNullException(nameof(tokenService));
+            _passwordHasher = passwordHasher ?? throw new ArgumentNullException(nameof(passwordHasher));
+            _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
+            _emailSender = emailSender ?? throw new ArgumentNullException(nameof(emailSender));
+            _passwordResetTokenStore = passwordResetTokenStore ?? throw new ArgumentNullException(nameof(passwordResetTokenStore));
         }
 
         [HttpPost("register")]
@@ -1098,9 +1158,6 @@ namespace dnd_game.presentation.api
             return Ok(result);
         }
 
-        /// <summary>
-        /// Выход из системы: отзывает refresh-токен, переданный в теле запроса.
-        /// </summary>
         [HttpPost("logout")]
         public async Task<IActionResult> Logout([FromBody] LogoutRequest request, CancellationToken cancellationToken)
         {
@@ -1108,7 +1165,65 @@ namespace dnd_game.presentation.api
                 return BadRequest(new { error = "Refresh-токен обязателен." });
 
             await _tokenService.RevokeRefreshTokenAsync(request.RefreshToken, cancellationToken);
+
+            // Отзываем access-токен, если он доступен
+            var accessToken = await HttpContext.GetTokenAsync("access_token");
+            if (!string.IsNullOrEmpty(accessToken))
+            {
+                await _tokenService.RevokeAccessTokenAsync(accessToken, cancellationToken);
+            }
+
             return NoContent();
+        }
+
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword(
+            [FromBody] Schemas.ForgotPasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(request.Email))
+                return BadRequest(new { error = "Email обязателен." });
+
+            var user = await _userRepository.GetByEmailAsync(request.Email, cancellationToken);
+            if (user != null)
+            {
+                var resetToken = await _passwordResetTokenStore.CreateAsync(user.Id, TimeSpan.FromMinutes(15), cancellationToken);
+
+                var resetLink = $"{Request.Scheme}://{Request.Host}/reset-password?token={Uri.EscapeDataString(resetToken)}";
+                var body = $"Для сброса пароля перейдите по ссылке: <a href=\"{resetLink}\">{resetLink}</a>";
+                await _emailSender.SendAsync(user.Email, "Восстановление пароля DnD", body, cancellationToken);
+            }
+
+            // Всегда возвращаем одинаковый ответ, чтобы не раскрывать существование email
+            return Ok(new { message = "Если указанный email зарегистрирован, на него отправлена инструкция по сбросу пароля." });
+        }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword(
+            [FromBody] Schemas.ResetPasswordRequest request,
+            CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(request.Token) || string.IsNullOrWhiteSpace(request.NewPassword))
+                return BadRequest(new { error = "Токен и новый пароль обязательны." });
+
+            var userId = await _passwordResetTokenStore.ValidateAsync(request.Token, cancellationToken);
+            if (userId == null)
+                return BadRequest(new { error = "Токен недействителен или истёк." });
+
+            var user = await _userRepository.GetByIdAsync(userId.Value, cancellationToken);
+            if (user == null)
+                return BadRequest(new { error = "Пользователь не найден." });
+
+            if (!_passwordHasher.IsStrongPassword(request.NewPassword))
+                return BadRequest(new { error = "Пароль не соответствует требованиям сложности." });
+
+            user.PasswordHash = _passwordHasher.Hash(request.NewPassword);
+            await _userRepository.UpdateAsync(user, cancellationToken);
+
+            await _passwordResetTokenStore.MarkUsedAsync(request.Token, cancellationToken);
+            await _tokenService.RevokeAllRefreshTokensAsync(user.Id, cancellationToken);
+
+            return Ok(new { message = "Пароль успешно изменён." });
         }
     }
 

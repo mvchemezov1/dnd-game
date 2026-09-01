@@ -134,31 +134,83 @@ namespace dnd_game.infrastructure.message_bus
             await handlerAction().ConfigureAwait(false);
         }
 
+        public async Task<object?> QueryAsyncUntyped(IQuery query, QueryContext? context = null, CancellationToken cancellationToken = default)
+        {
+            ArgumentNullException.ThrowIfNull(query);
+            context ??= new QueryContext();
+
+            var queryType = query.GetType();
+
+            // Находим интерфейс IQuery<TResult>
+            var queryInterface = queryType.GetInterfaces()
+                .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IQuery<>));
+
+            if (queryInterface == null)
+                throw new InvalidOperationException($"Тип {queryType.Name} не реализует IQuery<TResult>.");
+
+            var resultType = queryInterface.GetGenericArguments()[0];
+
+            // Строим тип обработчика IQueryHandler<TQuery, TResult>
+            var handlerType = typeof(IQueryHandler<,>).MakeGenericType(queryType, resultType);
+            var handler = _provider.GetService(handlerType)
+                ?? throw new InvalidOperationException($"Нет обработчика запроса '{queryType.Name}' с результатом '{resultType.Name}'.");
+
+            var method = handlerType.GetMethod("Handle", new[] { queryType, typeof(CancellationToken) })
+                ?? throw new InvalidOperationException("Метод Handle не найден.");
+
+            // Вызываем обработчик (вся рефлексия сосредоточена здесь)
+            var task = (Task)method.Invoke(handler, new object[] { query, cancellationToken })!;
+            await task.ConfigureAwait(false);
+
+            // Извлекаем результат из Task<TResult>
+            var resultProperty = task.GetType().GetProperty("Result");
+            return resultProperty?.GetValue(task);
+        }
+
         // ==================== Запросы ====================
 
         public async Task<TResult> QueryAsync<TResult>(
-            IQuery<TResult> query,
-            QueryContext? context = null,
-            CancellationToken cancellationToken = default)
+        IQuery<TResult> query,
+        QueryContext? context = null,
+        CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(query);
-            var queryType = query.GetType();
-            var handlerType = typeof(IQueryHandler<,>).MakeGenericType(queryType, typeof(TResult));
-            var handler = _provider.GetService(handlerType)
-                ?? throw new InvalidOperationException($"Нет обработчика запроса '{queryType.Name}' с результатом '{typeof(TResult).Name}'.");
+            context ??= new QueryContext();
 
-            var method = handlerType.GetMethod("Handle", [queryType, typeof(CancellationToken)])
-                ?? throw new InvalidOperationException("Метод Handle не найден.");
+            // Получаем все поведения конвейера запросов
+            var behaviors = _provider.GetServices<IQueryPipelineBehavior>().ToArray();
 
-            try
+            // Финальный делегат, вызывающий реальный обработчик
+            Func<Task<TResult>> handlerAction = async () =>
             {
-                return await ((Task<TResult>)method.Invoke(handler, [query, cancellationToken])!).ConfigureAwait(false);
-            }
-            catch (Exception ex)
+                var queryType = query.GetType();
+                var handlerType = typeof(IQueryHandler<,>).MakeGenericType(queryType, typeof(TResult));
+                var handler = _provider.GetService(handlerType)
+                    ?? throw new InvalidOperationException($"Нет обработчика запроса '{queryType.Name}' с результатом '{typeof(TResult).Name}'.");
+
+                var method = handlerType.GetMethod("Handle", [queryType, typeof(CancellationToken)])
+                    ?? throw new InvalidOperationException("Метод Handle не найден.");
+
+                try
+                {
+                    return await ((Task<TResult>)method.Invoke(handler, [query, cancellationToken])!).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Ошибка выполнения запроса {QueryType}", queryType.Name);
+                    throw;
+                }
+            };
+
+            // Оборачиваем цепочку поведений (в обратном порядке)
+            foreach (var behavior in behaviors.Reverse())
             {
-                _logger.LogError(ex, "Ошибка выполнения запроса {QueryType}", queryType.Name);
-                throw;
+                var next = handlerAction;
+                handlerAction = () => behavior.HandleAsync(query, context, next);
             }
+
+            // Выполняем итоговую цепочку
+            return await handlerAction().ConfigureAwait(false);
         }
 
         // ==================== События ====================

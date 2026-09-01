@@ -19,6 +19,7 @@ using dnd_game.infrastructure.localization;
 using dnd_game.infrastructure.message_bus;
 using dnd_game.infrastructure.monitoring;
 using dnd_game.infrastructure.network;
+using dnd_game.infrastructure.notifications;
 using dnd_game.infrastructure.persistence;
 using dnd_game.infrastructure.security;
 using dnd_game.infrastructure.seeding;
@@ -51,7 +52,6 @@ namespace dnd_game.presentation.api
             services.Configure<JwtSettings>(configuration.GetSection("Jwt"));
             services.Configure<TokenSettings>(configuration.GetSection("Token"));
             services.Configure<RateLimitConfiguration>(configuration.GetSection("RateLimiting"));
-            services.Configure<GameServerConfiguration>(configuration.GetSection("GameServer"));
 
             var tokenSecret = configuration["Token:Secret"];
             if (string.IsNullOrWhiteSpace(tokenSecret) ||
@@ -196,6 +196,8 @@ namespace dnd_game.presentation.api
             });
 
             services.AddSingleton<ICommandPipelineBehavior, CommandAuthorizationBehavior>();
+            services.AddSingleton<IAccessTokenBlacklist>(sp =>
+            new RedisAccessTokenBlacklist(sp.GetRequiredService<IConnectionMultiplexer>()));
 
             // 9. Менеджер согласованности
             services.AddSingleton<IConsistencyManager>(sp =>
@@ -224,6 +226,11 @@ namespace dnd_game.presentation.api
                     TimeSpan.FromMinutes(1)));
             services.AddSingleton<CampaignProjection>();
             services.AddSingleton<JourneyProjection>();
+
+            services.AddHostedService(sp => new OutboxProcessor(
+            sp,
+            connString,
+            sp.GetRequiredService<ILogger<OutboxProcessor>>()));
 
             // 12. Обработчики запросов
             services.AddSingleton<CharacterQueryHandler>();
@@ -263,6 +270,10 @@ namespace dnd_game.presentation.api
             services.AddSingleton<TravelHandler>();
             RegisterCommandHandlers(services);
 
+            services.Configure<SmtpSettings>(configuration.GetSection("Smtp"));
+            services.AddSingleton<IEmailSender, SmtpEmailSender>();
+            services.AddSingleton<PostgresPasswordResetTokenStore>(sp =>
+                new PostgresPasswordResetTokenStore(connString, sp.GetRequiredService<ILogger<PostgresPasswordResetTokenStore>>()));
             // 15. Обработчики событий
             services.AddSingleton<LoggingHandler>();
             services.AddSingleton<MetricHandler>();
@@ -315,23 +326,9 @@ namespace dnd_game.presentation.api
             services.AddSingleton<IHealthCheck, DndHealthCheck>();
 
             // 23. Сетевые компоненты
-            services.AddSingleton<ISessionManager, SessionManager>();
             services.AddSingleton<INetworkProtocol, JsonNetworkProtocol>();
             services.AddSingleton<IRateLimiter, RateLimiter>();
             services.AddSingleton<WebSocketHandler>();
-            services.AddSingleton<GameServer>(sp =>
-                new GameServer(
-                    sp.GetRequiredService<IOptions<GameServerConfiguration>>().Value,
-                    sp,
-                    sp.GetRequiredService<ICommandBus>(),
-                    sp.GetRequiredService<IEventBus>(),
-                    sp.GetRequiredService<IQueryBus>(),
-                    sp.GetRequiredService<ISessionManager>(),
-                    sp.GetRequiredService<PermissionChecker>(),
-                    sp.GetRequiredService<IMetricsCollector>(),
-                    sp.GetRequiredService<ITracer>(),
-                    sp.GetRequiredService<IAuthProvider>(),
-                    sp.GetRequiredService<ILogger<GameServer>>()));
 
             // 24. Мировые службы
             services.AddSingleton<IGridProvider>(sp =>
@@ -382,7 +379,9 @@ namespace dnd_game.presentation.api
                 sp.GetRequiredService<PermissionChecker>()));
             services.AddSingleton(sp => new OverrideCommands(
                 sp.GetRequiredService<ICommandBus>(),
-                sp.GetRequiredService<CharacterProjection>()));
+                sp.GetRequiredService<CharacterProjection>(),
+                sp.GetRequiredService<PermissionChecker>()
+            ));
             services.AddSingleton(sp => new DmUndoManager(
                 sp.GetRequiredService<UndoManager>(),
                 sp.GetRequiredService<ICommandBus>(),

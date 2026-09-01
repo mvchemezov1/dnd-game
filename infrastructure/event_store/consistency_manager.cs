@@ -47,13 +47,6 @@ namespace dnd_game.infrastructure.event_store
             int expectedVersion,
             string ownerId,
             CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// Проверить глобальные инварианты, не привязанные к одному агрегату
-        /// (например, запрет двух заклинаний с концентрацией на одном персонаже).
-        /// Должен вызываться перед сохранением после проверки версий.
-        /// </summary>
-        Task<bool> CheckGlobalInvariantsAsync(AggregateRoot aggregate, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
@@ -84,17 +77,17 @@ namespace dnd_game.infrastructure.event_store
 
         /// <inheritdoc />
         public async Task<ConsistencyResult> EnforceConsistencyAsync(
-            AggregateRoot aggregate,
-            int expectedVersion,
-            string ownerId,
-            CancellationToken cancellationToken = default)
+    AggregateRoot aggregate,
+    int expectedVersion,
+    string ownerId,
+    CancellationToken cancellationToken = default)
         {
             ArgumentNullException.ThrowIfNull(aggregate);
             if (string.IsNullOrWhiteSpace(ownerId))
                 throw new ArgumentException("Идентификатор владельца не может быть пустым.", nameof(ownerId));
             cancellationToken.ThrowIfCancellationRequested();
 
-            // 1. Пессимистическая блокировка для предотвращения одновременных изменений
+            // 1. Захватываем блокировку агрегата
             string lockKey = LockKeyFactory.ForAggregate(aggregate.Id);
             await using var lockHandle = await _lockManager.AcquireAsync(
                 lockKey,
@@ -135,21 +128,12 @@ namespace dnd_game.infrastructure.event_store
             }
             catch (Exception ex)
             {
-                // На случай других ошибок валидации
                 _logger.LogError(ex,
                     "Неожиданная ошибка при проверке инвариантов агрегата {AggregateId}",
                     aggregate.Id);
                 _metrics.IncrementCounter("dnd.consistency.invariant_error");
                 return ConsistencyResult.InvariantViolation;
             }
-
-            // 4. Проверка глобальных инвариантов
-            if (!await CheckGlobalInvariantsAsync(aggregate, cancellationToken))
-            {
-                _metrics.IncrementCounter("dnd.consistency.global_rule_violation");
-                return ConsistencyResult.GlobalRuleViolation;
-            }
-
             return ConsistencyResult.Success;
         }
 

@@ -253,7 +253,8 @@
                             // Бэкенд сам генерирует ID, поэтому characterId не отправляем
                             await Api.post('/api/characters', {
                                 name: d.name.trim(),
-                                maxHitPoints: maxHp
+                                maxHitPoints: maxHp,
+                                isNpc: true
                             });
                             closeModal();
                             toast('NPC создан', 'success');

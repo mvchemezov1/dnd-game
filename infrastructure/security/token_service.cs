@@ -55,6 +55,7 @@ namespace dnd_game.infrastructure.security
 
         /// <summary>Отзывает все refresh-токены пользователя.</summary>
         Task RevokeAllRefreshTokensAsync(Guid userId, CancellationToken cancellationToken = default);
+        Task RevokeAccessTokenAsync(string token, CancellationToken cancellationToken = default);
     }
 
     /// <summary>
@@ -89,17 +90,20 @@ namespace dnd_game.infrastructure.security
         private readonly IUserRepository _userRepository;
         private readonly IRefreshTokenStore _refreshTokenStore;
         private readonly ILogger<TokenService> _logger;
+        private readonly IAccessTokenBlacklist _accessTokenBlacklist;
 
         public TokenService(
             IOptions<TokenSettings> settings,
             IUserRepository userRepository,
             IRefreshTokenStore refreshTokenStore,
-            ILogger<TokenService> logger)
+            ILogger<TokenService> logger,
+            IAccessTokenBlacklist accessTokenBlacklist)
         {
             _settings = settings?.Value ?? throw new ArgumentNullException(nameof(settings));
             _userRepository = userRepository ?? throw new ArgumentNullException(nameof(userRepository));
             _refreshTokenStore = refreshTokenStore ?? throw new ArgumentNullException(nameof(refreshTokenStore));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _accessTokenBlacklist = accessTokenBlacklist ?? throw new ArgumentNullException(nameof(accessTokenBlacklist));
 
             if (string.IsNullOrWhiteSpace(_settings.Secret) || _settings.Secret.Length < 32)
                 throw new ArgumentException("Секретный ключ JWT должен быть не короче 32 символов.", nameof(settings));
@@ -135,6 +139,23 @@ namespace dnd_game.infrastructure.security
                 signingCredentials: credentials);
 
             return new JwtSecurityTokenHandler().WriteToken(token);
+        }
+
+        public async Task RevokeAccessTokenAsync(string token, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(token)) return;
+            var handler = new JwtSecurityTokenHandler();
+            var jwt = handler.ReadJwtToken(token);
+            var lifetime = jwt.ValidTo - DateTime.UtcNow;
+            if (lifetime > TimeSpan.Zero)
+            {
+                await _accessTokenBlacklist.RevokeAsync(token, lifetime, cancellationToken);
+            }
+        }
+
+        public async Task<bool> IsTokenRevokedAsync(string token, CancellationToken cancellationToken = default)
+        {
+            return await _accessTokenBlacklist.IsRevokedAsync(token, cancellationToken);
         }
 
         /// <inheritdoc />

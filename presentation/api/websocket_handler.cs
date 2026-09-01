@@ -139,6 +139,14 @@ namespace dnd_game.presentation.api
                 var sessionIdQuery = httpContext.Request.Query["sessionId"].FirstOrDefault();
                 if (Guid.TryParse(sessionIdQuery, out var sessionId))
                 {
+                    // Проверяем, состоит ли пользователь в указанной кампании/сессии
+                    if (!await _permissionChecker.IsMemberOfCampaignAsync(sessionId, cancellationToken))
+                    {
+                        await SendErrorMessage(state, "FORBIDDEN", "Вы не состоите в указанной кампании.");
+                        await CloseConnection(state, WebSocketCloseStatus.PolicyViolation, "Недостаточно прав для подключения к сессии");
+                        return;
+                    }
+
                     state.SessionId = sessionId;
                     await _sessionManager.AssociateConnection(state.UserId.Value, sessionId, state.ConnectionId, cancellationToken);
                 }
@@ -503,7 +511,7 @@ namespace dnd_game.presentation.api
                 }
 
                 var queryInterface = queryType.GetInterfaces()
-                    .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IQuery<>));
+                    .FirstOrDefault(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(domain.queries.IQuery<>));
                 if (queryInterface == null)
                 {
                     await SendQueryError(state, msg.CorrelationId, $"Тип {queryType.Name} не реализует IQuery<TResult>.");
@@ -590,30 +598,37 @@ namespace dnd_game.presentation.api
             Guid? userId,
             CancellationToken cancellationToken)
         {
+            // События, явно привязанные к игровой сессии
             if (@event is ISessionBoundEvent sessionEvent)
                 return sessionEvent.GameSessionId == sessionId;
 
+            // События кампании
+            if (@event is ICampaignEvent campaignEvent)
+                return campaignEvent.CampaignId == sessionId;
+
+            // События персонажа
             if (@event is ICharacterEvent characterEvent)
             {
                 if (!userId.HasValue)
                     return false;
 
+                // Владелец персонажа всегда получает события
                 var ownerId = await _ownershipRepository.GetOwnerIdAsync(characterEvent.CharacterId, cancellationToken);
                 if (ownerId == userId.Value)
                     return true;
 
+                // Для NPC проверяем, что персонаж относится к той же кампании, что и пользователь
                 if (await _ownershipRepository.IsNonPlayerCharacterAsync(characterEvent.CharacterId, cancellationToken))
                 {
-                    var campaignId = await _ownershipRepository.GetCampaignIdAsync(characterEvent.CharacterId, cancellationToken);
-                    // В полной реализации нужно проверить, что пользователь в той же кампании.
-                    // Пока достаточно наличия кампании.
-                    return campaignId.HasValue;
+                    var npcCampaignId = await _ownershipRepository.GetCampaignIdAsync(characterEvent.CharacterId, cancellationToken);
+                    return npcCampaignId == sessionId;
                 }
 
                 return false;
             }
 
-            return true; // глобальные события
+            // Глобальные события не рассылаем
+            return false;
         }
     }
 }

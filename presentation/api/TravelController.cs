@@ -125,10 +125,11 @@ namespace dnd_game.presentation.api
         /// <summary>
         /// Начинает путешествие группы по глобальной карте.
         /// </summary>
+       
         [HttpPost("journey/start")]
         public async Task<IActionResult> StartJourney(
-            [FromBody] StartJourneyRequest request,
-            CancellationToken cancellationToken)
+        [FromBody] StartJourneyRequest request,
+        CancellationToken cancellationToken)
         {
             if (request.PartyId == Guid.Empty || request.RouteId == Guid.Empty)
                 return BadRequest(new { error = "Идентификаторы группы и маршрута не могут быть пустыми." });
@@ -139,21 +140,13 @@ namespace dnd_game.presentation.api
                     request.PartyId,
                     request.RouteId,
                     request.Pace,
+                    SessionId, // из базового контроллера
                     cancellationToken);
                 return Ok(new { message = "Путешествие начато." });
             }
-            catch (UnauthorizedAccessException ex)
-            {
-                return Unauthorized(new { error = ex.Message });
-            }
-            catch (InvalidOperationException ex)
-            {
-                return BadRequest(new { error = ex.Message });
-            }
-            catch (OperationCanceledException)
-            {
-                return StatusCode(StatusCodes.Status499ClientClosedRequest, new { error = "Запрос был отменён." });
-            }
+            catch (UnauthorizedAccessException ex) { return Unauthorized(new { error = ex.Message }); }
+            catch (InvalidOperationException ex) { return BadRequest(new { error = ex.Message }); }
+            catch (OperationCanceledException) { return StatusCode(499, new { error = "Запрос был отменён." }); }
         }
 
         /// <summary>
@@ -169,7 +162,7 @@ namespace dnd_game.presentation.api
 
             try
             {
-                await _travelService.EndJourneyAsync(request.PartyId, cancellationToken);
+                await _travelService.EndJourneyAsync(request.PartyId, SessionId, cancellationToken);
                 return Ok(new { message = "Путешествие завершено." });
             }
             catch (UnauthorizedAccessException ex)
@@ -205,6 +198,7 @@ namespace dnd_game.presentation.api
                     request.PartyId,
                     request.Terrain,
                     request.HoursTraveled,
+                    SessionId,
                     request.NavigationCheckResult,
                     cancellationToken);
                 return Ok(new { message = "День путешествия пройден." });

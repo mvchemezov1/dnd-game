@@ -64,6 +64,17 @@ namespace dnd_game.domain.aggregates
                     IsActive = false;
                     break;
 
+                case ParticipantAddedToCombat ev:
+                    if (!Participants.Any(p => p.CharacterId == ev.CharacterId))
+                    {
+                        Participants.Add(new CombatParticipant(ev.CharacterId)
+                        {
+                            Initiative = ev.Initiative,
+                            HasRolledInitiative = IsActive && Round > 0 ? true : false // если бой уже начался, считаем готовым
+                        });
+                    }
+                    break;
+
                 case InitiativeRolled ev:
                     var participant = Participants.FirstOrDefault(p => p.CharacterId == ev.CharacterId);
                     if (participant != null)
@@ -126,17 +137,6 @@ namespace dnd_game.domain.aggregates
                         p.HasMovement = false;
                     }
                     CurrentTurnIndex = -1;
-                    break;
-
-                case ParticipantAddedToCombat ev:
-                    if (!Participants.Any(p => p.CharacterId == ev.CharacterId))
-                    {
-                        Participants.Add(new CombatParticipant(ev.CharacterId)
-                        {
-                            Initiative = ev.Initiative,
-                            HasRolledInitiative = false // новый участник должен бросить инициативу
-                        });
-                    }
                     break;
 
                 case ParticipantRemovedFromCombat ev:
@@ -329,17 +329,6 @@ namespace dnd_game.domain.aggregates
             ApplyChange(new CombatTurnEnded(Id, characterId, DateTime.UtcNow));
         }
 
-        public void AddParticipant(Guid characterId, int initiative)
-        {
-            if (characterId == Guid.Empty)
-                throw new ArgumentException("Идентификатор персонажа не может быть пустым.", nameof(characterId));
-            if (!IsActive)
-                throw new InvalidOperationException("Бой не активен.");
-            if (Participants.Any(p => p.CharacterId == characterId))
-                throw new InvalidOperationException("Персонаж уже участвует в бою.");
-            ApplyChange(new ParticipantAddedToCombat(Id, characterId, initiative));
-        }
-
         public void RemoveParticipant(Guid characterId)
         {
             if (characterId == Guid.Empty)
@@ -368,6 +357,36 @@ namespace dnd_game.domain.aggregates
             if (!p.HasBonusAction)
                 throw new InvalidOperationException("Нет доступного бонусного действия.");
             ApplyChange(new CombatBonusActionTaken(Id, characterId));
+        }
+
+        public void AddParticipant(Guid characterId, int initiative)
+        {
+            if (characterId == Guid.Empty)
+                throw new ArgumentException("Идентификатор персонажа не может быть пустым.", nameof(characterId));
+            if (!IsActive)
+                throw new InvalidOperationException("Бой не активен.");
+            if (Participants.Any(p => p.CharacterId == characterId))
+                throw new InvalidOperationException("Персонаж уже участвует в бою.");
+
+            ApplyChange(new ParticipantAddedToCombat(Id, characterId, initiative));
+
+            // Если раунд уже идёт, обновляем порядок хода
+            if (Round > 0)
+            {
+                // Сохраняем текущего персонажа
+                var currentCharacterId = Participants.FirstOrDefault(p => p.IsCurrentTurn)?.CharacterId;
+
+                // Пересортировка участников по инициативе и модификатору ловкости
+                Participants = [.. Participants
+            .OrderByDescending(p => p.Initiative)
+            .ThenByDescending(p => p.DexterityModifier)];
+
+                // Восстанавливаем индекс текущего хода
+                if (currentCharacterId != null)
+                {
+                    CurrentTurnIndex = Participants.FindIndex(p => p.CharacterId == currentCharacterId);
+                }
+            }
         }
 
         public void UseReaction(Guid characterId)
@@ -443,8 +462,25 @@ namespace dnd_game.domain.aggregates
             if (Participants.Count == 0)
                 return;
 
-            int next = (CurrentTurnIndex + 1) % Participants.Count;
-            StartTurn(Participants[next].CharacterId);
+            // Проверяем, что текущий ход завершён
+            if (Participants.Any(p => p.IsCurrentTurn))
+                throw new InvalidOperationException("Текущий ход не завершён. Сначала вызовите EndTurn.");
+
+            // Определяем индекс следующего участника
+            int nextIndex;
+            if (CurrentTurnIndex == -1)
+            {
+                // Если ход ещё не начинался (например, сразу после StartRound), начинаем с первого
+                nextIndex = 0;
+            }
+            else
+            {
+                nextIndex = CurrentTurnIndex + 1;
+                if (nextIndex >= Participants.Count)
+                    nextIndex = 0; // зацикливаем
+            }
+
+            StartTurn(Participants[nextIndex].CharacterId);
         }
 
         public void EndRound()

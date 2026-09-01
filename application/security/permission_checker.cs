@@ -62,6 +62,12 @@ namespace dnd_game.application.security
         Task<bool> IsNonPlayerCharacterAsync(Guid characterId, CancellationToken cancellationToken = default);
         Task<List<Guid>> GetOwnedCharacterIdsAsync(Guid userId, CancellationToken cancellationToken = default);
         Task AssignOwnerAsync(Guid characterId, Guid userId, CancellationToken cancellationToken = default);
+
+        /// <summary>Привязывает персонажа к кампании.</summary>
+        Task SetCampaignAsync(Guid characterId, Guid campaignId, CancellationToken cancellationToken = default);
+
+        /// <summary>Помечает персонажа как NPC.</summary>
+        Task MarkAsNpcAsync(Guid characterId, CancellationToken cancellationToken = default);
     }
 
     /// <summary>

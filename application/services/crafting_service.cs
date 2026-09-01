@@ -136,10 +136,10 @@ namespace dnd_game.application.services
         /// </param>
         /// <param name="cancellationToken">Токен отмены.</param>
         public async Task AdvanceCraftingTimeAsync(
-            Guid processId,
-            int hours,
-            bool? skillCheckSuccess = null,
-            CancellationToken cancellationToken = default)
+        Guid processId,
+        int hours,
+        bool? skillCheckSuccess = null,
+        CancellationToken cancellationToken = default)
         {
             ValidateGuid(processId, nameof(processId));
             if (hours <= 0)
@@ -148,6 +148,10 @@ namespace dnd_game.application.services
 
             var process = await _processRepository.GetByIdAsync(processId, cancellationToken)
                           ?? throw new InvalidOperationException("Процесс крафта не найден.");
+
+            // Проверяем право на управление персонажем, которому принадлежит процесс
+            if (!await _permissionChecker.CanControlCharacterAsync(process.CharacterId, cancellationToken))
+                throw new UnauthorizedAccessException("У вас нет прав для управления этим процессом крафта.");
 
             process.ElapsedHours += hours;
 
@@ -323,6 +327,29 @@ namespace dnd_game.application.services
             return process;
         }
 
+        public async Task CancelCraftingAsync(Guid processId, CancellationToken cancellationToken = default)
+        {
+            ValidateGuid(processId, nameof(processId));
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var process = await _processRepository.GetByIdAsync(processId, cancellationToken)
+                          ?? throw new InvalidOperationException("Процесс крафта не найден.");
+
+            // Проверяем право на управление персонажем
+            if (!await _permissionChecker.CanControlCharacterAsync(process.CharacterId, cancellationToken))
+                throw new UnauthorizedAccessException("У вас нет прав для отмены этого процесса крафта.");
+
+            var recipe = await _recipeRepository.GetByIdAsync(process.RecipeId, cancellationToken)
+                         ?? throw new InvalidOperationException("Рецепт не найден.");
+
+            int refundGold = recipe.GoldCost / 2;
+            if (refundGold > 0)
+                await _commandBus.SendAsync(new AddGold(process.CharacterId, refundGold));
+
+            await _processRepository.RemoveAsync(process.ProcessId, cancellationToken);
+            _logger.LogInformation("Процесс крафта {ProcessId} отменён, возвращено золото: {RefundGold}", process.ProcessId, refundGold);
+        }
+
         /// <summary>
         /// Продвинуть время крафта на указанное количество часов.
         /// </summary>
@@ -365,29 +392,6 @@ namespace dnd_game.application.services
 
             _logger.LogInformation("Процесс крафта {ProcessId} завершён, предмет {ItemId} добавлен персонажу {CharacterId}",
                 process.ProcessId, recipe.ItemId, process.CharacterId);
-        }
-
-        /// <summary>
-        /// Отменить крафт и вернуть половину золота.
-        /// </summary>
-        public async Task CancelCraftingAsync(Guid processId, CancellationToken cancellationToken = default)
-        {
-            ValidateGuid(processId, nameof(processId));
-            cancellationToken.ThrowIfCancellationRequested();
-
-            var process = await _processRepository.GetByIdAsync(processId, cancellationToken)
-                          ?? throw new InvalidOperationException("Процесс крафта не найден.");
-
-            var recipe = await _recipeRepository.GetByIdAsync(process.RecipeId, cancellationToken)
-                         ?? throw new InvalidOperationException("Рецепт не найден.");
-
-            // Возвращаем половину стоимости золота (целочисленное деление)
-            int refundGold = recipe.GoldCost / 2;
-            if (refundGold > 0)
-                await _commandBus.SendAsync(new AddGold(process.CharacterId, refundGold));
-
-            await _processRepository.RemoveAsync(process.ProcessId, cancellationToken);
-            _logger.LogInformation("Процесс крафта {ProcessId} отменён, возвращено золото: {RefundGold}", process.ProcessId, refundGold);
         }
 
         /// <summary>

@@ -129,9 +129,9 @@ namespace dnd_game.infrastructure.event_store
         /// Внутренний метод сохранения событий в транзакции.
         /// </summary>
         private async Task SaveInternal<T>(
-    T aggregate,
-    EventMetadata metadataTemplate,
-    CancellationToken cancellationToken) where T : AggregateRoot, new()
+            T aggregate,
+            EventMetadata metadataTemplate,
+            CancellationToken cancellationToken) where T : AggregateRoot, new()
         {
             var events = aggregate.GetUncommittedEvents().ToList();
             if (events.Count == 0)
@@ -187,23 +187,38 @@ namespace dnd_game.infrastructure.event_store
                         ? JsonSerializer.Serialize(metadata.CustomHeaders)
                         : DBNull.Value;
 
-                    await using var insertCmd = new NpgsqlCommand(@"
+                    // Вставка в основную таблицу событий
+                    await using (var insertCmd = new NpgsqlCommand(@"
                 INSERT INTO events (event_id, aggregate_id, aggregate_type, version, event_type, data, user_id, session_id, custom_headers, timestamp)
                 VALUES (@event_id, @aggId, @aggType, @ver, @type, @data::jsonb, @userId, @sessionId, @headers::jsonb, @ts)
-            ", conn, tx);
+            ", conn, tx))
+                    {
+                        insertCmd.Parameters.AddWithValue("event_id", NpgsqlDbType.Uuid, metadata.EventId);
+                        insertCmd.Parameters.AddWithValue("aggId", NpgsqlDbType.Uuid, aggregate.Id);
+                        insertCmd.Parameters.AddWithValue("aggType", typeof(T).Name);
+                        insertCmd.Parameters.AddWithValue("ver", nextVersion);
+                        insertCmd.Parameters.AddWithValue("type", metadata.EventType);
+                        insertCmd.Parameters.AddWithValue("data", json);
+                        insertCmd.Parameters.AddWithValue("userId", NpgsqlDbType.Uuid, metadata.UserId);
+                        insertCmd.Parameters.AddWithValue("sessionId", NpgsqlDbType.Uuid, metadata.GameSessionId);
+                        insertCmd.Parameters.AddWithValue("headers", NpgsqlDbType.Jsonb, headersJson);
+                        insertCmd.Parameters.AddWithValue("ts", metadata.Timestamp);
 
-                    insertCmd.Parameters.AddWithValue("event_id", NpgsqlDbType.Uuid, metadata.EventId);
-                    insertCmd.Parameters.AddWithValue("aggId", NpgsqlDbType.Uuid, aggregate.Id);
-                    insertCmd.Parameters.AddWithValue("aggType", typeof(T).Name);
-                    insertCmd.Parameters.AddWithValue("ver", nextVersion);
-                    insertCmd.Parameters.AddWithValue("type", metadata.EventType);
-                    insertCmd.Parameters.AddWithValue("data", json);
-                    insertCmd.Parameters.AddWithValue("userId", NpgsqlDbType.Uuid, metadata.UserId);
-                    insertCmd.Parameters.AddWithValue("sessionId", NpgsqlDbType.Uuid, metadata.GameSessionId);
-                    insertCmd.Parameters.AddWithValue("headers", NpgsqlDbType.Jsonb, headersJson);
-                    insertCmd.Parameters.AddWithValue("ts", metadata.Timestamp);
+                        await insertCmd.ExecuteNonQueryAsync(cancellationToken);
+                    }
 
-                    await insertCmd.ExecuteNonQueryAsync(cancellationToken);
+                    // ✅ Запись в outbox (в той же транзакции)
+                    await using (var outboxCmd = new NpgsqlCommand(@"
+                INSERT INTO outbox_events (aggregate_id, event_type, payload)
+                VALUES (@aggId, @eventType, @payload::jsonb)
+            ", conn, tx))
+                    {
+                        outboxCmd.Parameters.AddWithValue("aggId", NpgsqlDbType.Uuid, aggregate.Id);
+                        outboxCmd.Parameters.AddWithValue("eventType", metadata.EventType);
+                        outboxCmd.Parameters.AddWithValue("payload", json);
+                        await outboxCmd.ExecuteNonQueryAsync(cancellationToken);
+                    }
+
                     savedEvents.Add(new StoredEvent { DomainEvent = domainEvent, Metadata = metadata });
                     nextVersion++;
                 }
@@ -211,36 +226,11 @@ namespace dnd_game.infrastructure.event_store
 
             await tx.CommitAsync(cancellationToken);
 
-            // Публикуем события в шину
-            foreach (var storedEvent in savedEvents)
-            {
-                try
-                {
-                    await _eventBus.PublishAsync(storedEvent.DomainEvent, cancellationToken);
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Не удалось опубликовать событие {EventType} для агрегата {AggregateId}",
-                        storedEvent.DomainEvent.GetType().Name, aggregate.Id);
-                }
-            }
-
-            // Уведомляем подписчиков SubscribeAsync
-            foreach (var storedEvent in savedEvents)
-            {
-                foreach (var subscriber in _subscribers)
-                {
-                    try
-                    {
-                        await subscriber(storedEvent, cancellationToken);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Ошибка в подписчике EventStore для события {EventType}",
-                            storedEvent.DomainEvent.GetType().Name);
-                    }
-                }
-            }
+            // ❌ УДАЛИТЬ или закомментировать старый блок публикации в IEventBus
+            // foreach (var storedEvent in savedEvents)
+            // {
+            //     await _eventBus.PublishAsync(storedEvent.DomainEvent, cancellationToken);
+            // }
 
             // Обновляем состояние агрегата
             aggregate.SetVersion(nextVersion - 1);

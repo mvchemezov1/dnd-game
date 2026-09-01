@@ -93,6 +93,39 @@ namespace dnd_game.presentation.api
             }
         }
 
+        [HttpPost("{dialogueId:guid}/resolve-skill-check")]
+        public async Task<IActionResult> ResolveSkillCheck(
+        Guid dialogueId,
+        [FromBody] ResolveSkillCheckRequest request,
+        CancellationToken cancellationToken)
+        {
+            if (dialogueId == Guid.Empty)
+                return BadRequest(new { error = "Идентификатор диалога не может быть пустым." });
+
+            try
+            {
+                var state = await _dialogService.ResolveSkillCheckAsync(
+                    dialogueId,
+                    request.RollResult,
+                    request.ProficiencyBonus,
+                    request.AbilityModifier,
+                    cancellationToken);
+                return Ok(state);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(new { error = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+            catch (OperationCanceledException)
+            {
+                return StatusCode(499, new { error = "Запрос был отменён." });
+            }
+        }
+
         /// <summary>
         /// Возвращает текущее состояние диалога (текст NPC и варианты ответов).
         /// </summary>

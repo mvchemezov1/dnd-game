@@ -272,6 +272,8 @@ namespace dnd_game
             // ============================================================
             // 10. Middleware
             // ============================================================
+            app.UseAuthentication();
+            app.UseMiddleware<UserActivityMiddleware>();
             app.UseCors("AllowSpecificOrigins");
             app.UseStaticFiles();
 

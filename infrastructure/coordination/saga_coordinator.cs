@@ -80,68 +80,56 @@ namespace dnd_game.infrastructure.coordination
             var factories = _registry.GetFactoriesForEvent(@event.GetType());
             foreach (var factory in factories)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-
                 var saga = factory(@event);
-                if (saga == null)
-                {
-                    _logger.LogWarning("Фабрика для события {EventType} вернула null вместо саги.", @event.GetType().Name);
-                    continue;
-                }
+                if (saga == null) continue;
 
-                // Если сага умеет работать с командами, передаём ей шину команд
                 if (saga is ICommandingSaga commandingSaga)
                 {
                     commandingSaga.SetCommandBus(_commandBus);
                 }
 
-                // Пытаемся загрузить существующее состояние саги по SagaId.
-                // Если сага новая, LoadState не вызывается, и она использует начальное состояние.
                 var state = await _stateRepository.LoadAsync(saga.SagaId, cancellationToken);
                 if (state != null)
                 {
                     saga.LoadState(state);
-                    _logger.LogDebug("Состояние саги {SagaId} загружено из репозитория.", saga.SagaId);
                 }
 
-                // Блокируем обработку события для данной саги, чтобы избежать гонок.
-                // В качестве ключа блокировки используем CorrelationId (если есть) или SagaId.
                 var correlationId = state?.CorrelationId ?? saga.SagaId;
                 string lockKey = LockKeyFactory.ForSaga(correlationId);
                 var lockHandle = await _lockManager.AcquireAsync(
                     lockKey,
                     LockMode.Exclusive,
-                    ownerId: "saga-coordinator",
-                    timeout: TimeSpan.FromSeconds(10),
+                    "saga-coordinator",
+                    TimeSpan.FromSeconds(10),
                     cancellationToken);
 
                 if (lockHandle == null)
                 {
-                    _logger.LogWarning("Не удалось захватить блокировку для саги {SagaId}. Событие пропущено.", saga.SagaId);
+                    _logger.LogWarning("Не удалось захватить блокировку для саги {SagaId}.", saga.SagaId);
                     continue;
                 }
 
                 try
                 {
+                    // Обработка события
                     await saga.Handle(@event, cancellationToken);
-                    // Сохраняем изменённое состояние
-                    saga.State.Version++; // увеличиваем версию перед сохранением (если поле доступно)
+
+                    // Атомарное обновление версии и сохранение под блокировкой
+                    saga.State.Version++;
                     await _stateRepository.SaveAsync(saga.State, cancellationToken);
+
                     _logger.LogInformation("Сага {SagaId} успешно обработала событие {EventType}.", saga.SagaId, @event.GetType().Name);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "Ошибка обработки саги {SagaId} для события {EventType}.", saga.SagaId, @event.GetType().Name);
 
-                    // Если сага поддерживает компенсацию, пытаемся откатить изменения
                     if (saga is ICompensatingSaga compensatingSaga)
                     {
                         try
                         {
-                            _logger.LogInformation("Запуск компенсации для саги {SagaId}.", saga.SagaId);
                             await compensatingSaga.Compensate(cancellationToken);
                             saga.State.Status = SagaStatus.Compensated;
-                            _logger.LogInformation("Компенсация саги {SagaId} успешно завершена.", saga.SagaId);
                         }
                         catch (Exception compEx)
                         {
@@ -153,6 +141,8 @@ namespace dnd_game.infrastructure.coordination
                     {
                         saga.State.Status = SagaStatus.Failed;
                     }
+
+                    saga.State.Version++;
                     await _stateRepository.SaveAsync(saga.State, cancellationToken);
                 }
                 finally

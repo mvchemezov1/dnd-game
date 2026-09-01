@@ -28,18 +28,9 @@ namespace dnd_game.application.projections
         /// </summary>
         private void InvalidateCache(Guid characterId)
         {
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    await _cache.RemoveAsync($"character:{characterId}");
-                    await _cache.RemoveAsync("characters:all");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Ошибка при инвалидации кэша персонажа {CharacterId}", characterId);
-                }
-            });
+            // Синхронное удаление, чтобы кэш был очищен сразу после изменения состояния
+            _cache.RemoveSync($"character:{characterId}");
+            _cache.RemoveSync("characters:all");
         }
 
         // ==================== Обработчики событий ====================

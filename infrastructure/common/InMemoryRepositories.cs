@@ -69,24 +69,12 @@ namespace dnd_game.infrastructure.common
             return Task.FromResult(result);
         }
 
-        // Вспомогательные методы управления (не входят в интерфейс)
-        public Task AssignOwnerAsync(Guid characterId, Guid userId, CancellationToken cancellationToken = default)
-        {
-            ValidateGuid(characterId, nameof(characterId));
-            ValidateGuid(userId, nameof(userId));
-            cancellationToken.ThrowIfCancellationRequested();
-            _ownership[characterId] = userId;
-            _logger.LogDebug("Персонаж {CharacterId} привязан к игроку {UserId}", characterId, userId);
-            return Task.CompletedTask;
-        }
-
         public Task SetCampaignAsync(Guid characterId, Guid campaignId, CancellationToken cancellationToken = default)
         {
             ValidateGuid(characterId, nameof(characterId));
             ValidateGuid(campaignId, nameof(campaignId));
             cancellationToken.ThrowIfCancellationRequested();
             _characterCampaigns[characterId] = campaignId;
-            _logger.LogDebug("Персонаж {CharacterId} привязан к кампании {CampaignId}", characterId, campaignId);
             return Task.CompletedTask;
         }
 
@@ -95,7 +83,17 @@ namespace dnd_game.infrastructure.common
             ValidateGuid(characterId, nameof(characterId));
             cancellationToken.ThrowIfCancellationRequested();
             _npcCharacters[characterId] = true;
-            _logger.LogDebug("Персонаж {CharacterId} помечен как NPC", characterId);
+            return Task.CompletedTask;
+        }
+
+        // Вспомогательные методы управления (не входят в интерфейс)
+        public Task AssignOwnerAsync(Guid characterId, Guid userId, CancellationToken cancellationToken = default)
+        {
+            ValidateGuid(characterId, nameof(characterId));
+            ValidateGuid(userId, nameof(userId));
+            cancellationToken.ThrowIfCancellationRequested();
+            _ownership[characterId] = userId;
+            _logger.LogDebug("Персонаж {CharacterId} привязан к игроку {UserId}", characterId, userId);
             return Task.CompletedTask;
         }
 

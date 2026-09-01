@@ -15,7 +15,7 @@ namespace dnd_game.presentation.api
         // =====================================================================
 
         /// <summary>Запрос на создание персонажа.</summary>
-        public sealed record CreateCharacterRequest(string Name, int MaxHitPoints);
+        public sealed record CreateCharacterRequest(string Name, int MaxHitPoints, bool IsNpc = false);
 
         public sealed record MoveCharacterRequest(Guid CharacterId, int TargetX, int TargetY);
 
@@ -34,12 +34,22 @@ namespace dnd_game.presentation.api
         /// <summary>Запрос на установку точного количества золота (для мастера/админа).</summary>
         public sealed record SetGoldRequest(int Amount);
 
+        /// <summary>Запрос на смену пароля текущим пользователем.</summary>
+        public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+
+        /// <summary>Запрос на восстановление пароля (заглушка).</summary>
+        public sealed record ForgotPasswordRequest(string Email);
+        public sealed record ResetPasswordRequest(string Token, string NewPassword);
+
         // =====================================================================
         // Бой
         // =====================================================================
 
         /// <summary>Запрос на начало боя.</summary>
-        public sealed record StartCombatRequest(Guid CombatId, List<Guid> Participants);
+        public sealed record StartCombatRequest(
+        Guid CombatId,
+        List<Guid> Participants,
+        List<Guid>? PlayerCharacterIds = null);
 
         /// <summary>Запрос на бросок инициативы участника.</summary>
         public sealed record RollInitiativeRequest(Guid ParticipantId, int InitiativeRoll, int DexterityModifier);
@@ -161,6 +171,11 @@ namespace dnd_game.presentation.api
         // =====================================================================
         // Диалоги
         // =====================================================================
+
+        public sealed record ResolveSkillCheckRequest(
+        int RollResult,
+        int ProficiencyBonus,
+        int AbilityModifier);
 
         /// <summary>Запрос на начало диалога.</summary>
         public sealed record StartDialogRequest(Guid DialogueId, Guid NpcId, Guid CharacterId);

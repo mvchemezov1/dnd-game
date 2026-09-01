@@ -62,10 +62,10 @@ namespace dnd_game.infrastructure.coordination
             RegisterSaga<ExperienceGained>(e => new LevelUpSaga(e.CharacterId, commandBus, characterProjection));
 
             // ==================== Бой ====================
-            // Один экземпляр CombatSaga на один бой (SagaId = CombatId)
             RegisterSaga<CombatStarted>(e => new CombatSaga(e.CombatId, commandBus));
             RegisterSaga<InitiativeRolled>(e => new CombatSaga(e.CombatId, commandBus));
             RegisterSaga<CombatRoundStarted>(e => new CombatSaga(e.CombatId, commandBus));
+            RegisterSaga<CombatRoundEnded>(e => new CombatSaga(e.CombatId, commandBus)); // <-- добавлено
             RegisterSaga<CombatTurnEnded>(e => new CombatSaga(e.CombatId, commandBus));
             RegisterSaga<ParticipantRemovedFromCombat>(e => new CombatSaga(e.CombatId, commandBus));
             // ==================== Повышение уровня ====================

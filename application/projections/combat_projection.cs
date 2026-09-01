@@ -37,10 +37,9 @@ namespace dnd_game.application.projections
         /// </summary>
         private void InvalidateCache(Guid combatId)
         {
-            // Синхронное удаление для гарантии согласованности.
-            _cache.RemoveAsync($"combat:{combatId}").GetAwaiter().GetResult();
-            _cache.RemoveAsync($"combat:participants:{combatId}").GetAwaiter().GetResult();
-            _cache.RemoveAsync($"combat:current:{combatId}").GetAwaiter().GetResult();
+            _cache.RemoveSync($"combat:{combatId}");
+            _cache.RemoveSync($"combat:participants:{combatId}");
+            _cache.RemoveSync($"combat:current:{combatId}");
         }
 
         /// <summary>

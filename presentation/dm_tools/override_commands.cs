@@ -4,54 +4,62 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using dnd_game.application.projections;
+using dnd_game.application.security;
 using dnd_game.domain.commands;
 using dnd_game.infrastructure.message_bus;
 
 namespace dnd_game.presentation.dm_tools
 {
-    /// <summary>
-    /// Инструменты Мастера для принудительного изменения состояния игры,
-    /// обхода ограничений и быстрого применения эффектов.
-    /// Все методы отправляют соответствующие доменные команды через шину команд.
-    /// </summary>
-    public class OverrideCommands(ICommandBus commandBus, CharacterProjection characterProjection)
+    public class OverrideCommands
     {
-        private readonly ICommandBus _commandBus = commandBus ?? throw new ArgumentNullException(nameof(commandBus));
-        private readonly CharacterProjection _characterProjection = characterProjection ?? throw new ArgumentNullException(nameof(characterProjection));
+        private readonly ICommandBus _commandBus;
+        private readonly CharacterProjection _characterProjection;
+        private readonly PermissionChecker _permissionChecker;
 
-        // --------------------------------------------------------------------------------
-        // Жизнь и смерть персонажа
-        // --------------------------------------------------------------------------------
+        public OverrideCommands(
+            ICommandBus commandBus,
+            CharacterProjection characterProjection,
+            PermissionChecker permissionChecker)
+        {
+            _commandBus = commandBus ?? throw new ArgumentNullException(nameof(commandBus));
+            _characterProjection = characterProjection ?? throw new ArgumentNullException(nameof(characterProjection));
+            _permissionChecker = permissionChecker ?? throw new ArgumentNullException(nameof(permissionChecker));
+        }
 
-        /// <summary>Принудительно убивает персонажа.</summary>
+        private async Task EnsureGameMasterAccessAsync(CancellationToken ct)
+        {
+            if (!await _permissionChecker.IsGameMasterAsync(ct))
+                throw new UnauthorizedAccessException("Только Мастер или Администратор может выполнить это действие.");
+        }
+
         public async Task ForceKillAsync(Guid characterId, CancellationToken ct = default)
         {
+            await EnsureGameMasterAccessAsync(ct);
             ValidateCharacterId(characterId);
             await _commandBus.SendAsync(new MarkCharacterDead(characterId), ct);
         }
 
-        /// <summary>Оживляет персонажа с указанным количеством хитов.</summary>
         public async Task ReviveCharacterAsync(Guid characterId, int newHitPoints = 1, CancellationToken ct = default)
         {
+            await EnsureGameMasterAccessAsync(ct);
             ValidateCharacterId(characterId);
-            if (newHitPoints <= 0)
-                throw new ArgumentOutOfRangeException(nameof(newHitPoints), "Количество хитов должно быть положительным.");
+            if (newHitPoints <= 0) throw new ArgumentOutOfRangeException(nameof(newHitPoints));
             await _commandBus.SendAsync(new ReviveCharacter(characterId, newHitPoints), ct);
         }
 
-        // --------------------------------------------------------------------------------
-        // Предметы и золото
-        // --------------------------------------------------------------------------------
-
-        /// <summary>Выдаёт предмет персонажу.</summary>
         public async Task GrantItemAsync(Guid characterId, string itemId, string itemName, int quantity = 1, CancellationToken ct = default)
         {
+            await EnsureGameMasterAccessAsync(ct);
             ValidateCharacterId(characterId);
             ValidateItemId(itemId);
-            if (string.IsNullOrWhiteSpace(itemName)) throw new ArgumentException("Имя предмета не может быть пустым.", nameof(itemName));
-            if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity), "Количество должно быть положительным.");
+            if (string.IsNullOrWhiteSpace(itemName)) throw new ArgumentException("отсутствует название предмета");
+            if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
             await _commandBus.SendAsync(new AddInventoryItem(characterId, itemId, itemName, quantity), ct);
         }
+
+        // --------------------------------------------------------------------------------
+        // Жизнь и смерть персонажа
+        // --------------------------------------------------------------------------------
 
         /// <summary>Удаляет предмет у персонажа.</summary>
         public async Task RemoveItemAsync(Guid characterId, string itemId, int quantity = 1, CancellationToken ct = default)

@@ -83,6 +83,31 @@ namespace dnd_game.infrastructure.config
         public int MaxReadPageSize { get; set; } = 500;
     }
 
+    /// <summary>Настройки SMTP-сервера для отправки почты.</summary>
+    public class SmtpSettings
+    {
+        /// <summary>Хост SMTP-сервера (например, smtp.gmail.com).</summary>
+        public string Host { get; set; } = "localhost";
+
+        /// <summary>Порт SMTP-сервера (обычно 587 для TLS).</summary>
+        public int Port { get; set; } = 587;
+
+        /// <summary>Использовать SSL/TLS.</summary>
+        public bool EnableSsl { get; set; } = true;
+
+        /// <summary>Логин для аутентификации на SMTP-сервере.</summary>
+        public string Username { get; set; } = string.Empty;
+
+        /// <summary>Пароль для аутентификации на SMTP-сервере.</summary>
+        public string Password { get; set; } = string.Empty;
+
+        /// <summary>Email отправителя.</summary>
+        public string FromEmail { get; set; } = "noreply@dndgame.local";
+
+        /// <summary>Отображаемое имя отправителя.</summary>
+        public string FromName { get; set; } = "DnD Game";
+    }
+
     /// <summary>
     /// Настройки игровых правил по умолчанию (могут быть переопределены конкретной кампанией).
     /// </summary>

@@ -4,10 +4,12 @@
         root.innerHTML = `
             <div class="card">
                 <h2>Путешествия</h2>
-                <div class="row">
-                    <input id="party-id" placeholder="ID группы" style="width:300px">
-                    <input id="route-id" placeholder="ID маршрута" style="width:300px">
-                    <button class="btn" data-action="start-journey">Начать</button>
+                <div class="row" style="margin-top:10px">
+                    <select id="pace" style="width:150px">
+                        <option value="Slow">Slow</option>
+                        <option value="Normal" selected>Normal</option>
+                        <option value="Fast">Fast</option>
+                    </select>
                 </div>
                 <div class="row" style="margin-top:10px">
                     <input id="pace" value="Normal" style="width:150px">

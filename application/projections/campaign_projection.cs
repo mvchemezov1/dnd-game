@@ -104,20 +104,10 @@ namespace dnd_game.application.projections
 
         private void InvalidateCache(Guid campaignId)
         {
-            _ = Task.Run(async() =>
-            {
-                try
-                {
-                    await _cache.RemoveAsync($"campaign:{campaignId}");
-                    await _cache.RemoveAsync($"campaign:quests:{campaignId}");
-                    await _cache.RemoveAsync($"campaign:activeQuests:{campaignId}");
-                    await _cache.RemoveAsync($"campaign:worldEvents:{campaignId}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "Не удалось инвалидировать кэш кампании {CampaignId}", campaignId);
-                }
-            });
+            _cache.RemoveSync($"campaign:{campaignId}");
+            _cache.RemoveSync($"campaign:quests:{campaignId}");
+            _cache.RemoveSync($"campaign:activeQuests:{campaignId}");
+            _cache.RemoveSync($"campaign:worldEvents:{campaignId}");
         }
 
         private void InvalidateFactionCache(string? factionId = null)

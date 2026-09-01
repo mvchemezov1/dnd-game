@@ -79,6 +79,10 @@ namespace dnd_game.domain.sagas
                     await OnParticipantRemoved(participantRemoved, cancellationToken);
                     break;
 
+                case CombatRoundEnded roundEnded:
+                    await OnRoundEnded(roundEnded, cancellationToken);
+                    break;
+
                 // Другие события при необходимости можно добавить
                 default:
                     break;
@@ -127,6 +131,38 @@ namespace dnd_game.domain.sagas
             await Task.CompletedTask;
         }
 
+        private async Task OnTurnEnded(CombatTurnEnded e, CancellationToken cancellationToken)
+        {
+            if (_state.CombatId != e.CombatId)
+                return;
+
+            int nextIndex = _state.CurrentTurnIndex + 1;
+            if (nextIndex < _state.TurnOrder.Count)
+            {
+                _state.CurrentTurnIndex = nextIndex;
+                await SendCommand(new NextTurn(_state.CombatId), cancellationToken);
+            }
+            else
+            {
+                // Завершаем раунд. Новый раунд начнётся по событию CombatRoundEnded.
+                await SendCommand(new EndRound(_state.CombatId), cancellationToken);
+            }
+        }
+
+        private async Task OnRoundEnded(CombatRoundEnded e, CancellationToken cancellationToken)
+        {
+            if (_state.CombatId != e.CombatId)
+                return;
+
+            _state.CurrentTurnIndex = -1; // сбрасываем до начала следующего раунда
+
+            // Если бой ещё активен и есть участники, начинаем новый раунд
+            if (_state.IsActive && _state.Participants.Count > 0)
+            {
+                await SendCommand(new StartRound(_state.CombatId), cancellationToken);
+            }
+        }
+
         private async Task OnInitiativeRolled(InitiativeRolled e, CancellationToken cancellationToken)
         {
             if (_state.CombatId != e.CombatId)
@@ -167,27 +203,6 @@ namespace dnd_game.domain.sagas
                 await SendCommand(new NextTurn(_state.CombatId), cancellationToken);
         }
 
-        private async Task OnTurnEnded(CombatTurnEnded e, CancellationToken cancellationToken)
-        {
-            if (_state.CombatId != e.CombatId)
-                return;
-
-            int nextIndex = _state.CurrentTurnIndex + 1;
-            if (nextIndex < _state.TurnOrder.Count)
-            {
-                _state.CurrentTurnIndex = nextIndex;
-                await SendCommand(new NextTurn(_state.CombatId), cancellationToken);
-            }
-            else
-            {
-                // Конец раунда
-                await SendCommand(new EndRound(_state.CombatId), cancellationToken);
-                // Если бой ещё активен, начинаем следующий раунд
-                if (_state.IsActive)
-                    await SendCommand(new StartRound(_state.CombatId), cancellationToken);
-            }
-        }
-
         private async Task OnCharacterDied(CharacterDied e, CancellationToken cancellationToken)
         {
             if (_state.Participants.ContainsKey(e.CharacterId))
@@ -222,10 +237,13 @@ namespace dnd_game.domain.sagas
             if (_state.Participants.Count == 0)
                 return true;
 
+            // Если список игровых персонажей не задан, бой завершается только когда не осталось участников
+            if (_state.PlayerCharacterIds == null || _state.PlayerCharacterIds.Count == 0)
+                return false;
+
             bool hasPlayers = _state.Participants.Values.Any(p => _state.PlayerCharacterIds.Contains(p.CharacterId));
             bool hasEnemies = _state.Participants.Values.Any(p => !_state.PlayerCharacterIds.Contains(p.CharacterId));
 
-            // Бой окончен, если не осталось игроков или не осталось врагов
             return !hasPlayers || !hasEnemies;
         }
 
