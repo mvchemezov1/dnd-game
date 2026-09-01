@@ -38,14 +38,14 @@ public class CampaignHandlerTests
         {
             new QuestObjectiveData { Description = "Test objective", RequiredProgress = 1 }
         };
-                var command = new CreateQuestCommand(
-                    campaignId,
-                    questId,
-                    "Slay the Dragon",
-                    "Description",
-                    objectives,
-                    new List<QuestRewardData>(),
-                    new List<Guid>());
+        var command = new CreateQuestCommand(
+            campaignId,
+            questId,
+            "Slay the Dragon",
+            "Description",
+            objectives,
+            new List<QuestRewardData>(),
+            new List<Guid>());
 
         // Act
         await _handler.Handle(command, CancellationToken.None);
@@ -62,7 +62,11 @@ public class CampaignHandlerTests
         var campaignId = Guid.NewGuid();
         var questId = Guid.NewGuid();
         var campaign = new CampaignAggregate(campaignId, "Test Campaign", Guid.NewGuid());
-        campaign.CreateQuest(questId, "Slay the Dragon", "Description", new List<QuestObjectiveData>(), new List<QuestRewardData>(), new List<Guid>());
+        var objectives = new List<QuestObjectiveData>
+        {
+            new QuestObjectiveData { Description = "Test objective", RequiredProgress = 1 }
+        };
+        campaign.CreateQuest(questId, "Slay the Dragon", "Description", objectives, new List<QuestRewardData>(), new List<Guid>());
         campaign.ClearUncommittedEvents();
 
         _eventStoreMock
@@ -86,8 +90,11 @@ public class CampaignHandlerTests
         var campaignId = Guid.NewGuid();
         var questId = Guid.NewGuid();
         var campaign = new CampaignAggregate(campaignId, "Test Campaign", Guid.NewGuid());
-        campaign.CreateQuest(questId, "Slay the Dragon", "Description", new List<QuestObjectiveData>(), new List<QuestRewardData>(), new List<Guid>());
-        campaign.AcceptQuest(questId);
+        var objectives = new List<QuestObjectiveData>
+        {
+            new QuestObjectiveData { Description = "Test objective", RequiredProgress = 1 }
+        };
+        campaign.CreateQuest(questId, "Slay the Dragon", "Description", objectives, new List<QuestRewardData>(), new List<Guid>());
         campaign.ClearUncommittedEvents();
 
         _eventStoreMock

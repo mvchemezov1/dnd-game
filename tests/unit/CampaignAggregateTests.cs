@@ -15,10 +15,15 @@ namespace dnd_game.tests.unit
         {
             var objectives = new List<QuestObjectiveData>
     {
-        new QuestObjectiveData { Description = "Test objective", RequiredProgress = 1 }
+        new QuestObjectiveData { Description = "Тестовая цель", RequiredProgress = 1 }
     };
-            campaign.CreateQuest(questId, title, description: "", objectives: objectives,
-                rewards: new List<QuestRewardData>(), participantIds: new List<Guid>());
+            campaign.CreateQuest(
+                questId,
+                title,
+                description: string.Empty,
+                objectives: objectives,
+                rewards: new List<QuestRewardData>(),
+                participantIds: new List<Guid>());
         }
 
         [Fact]
