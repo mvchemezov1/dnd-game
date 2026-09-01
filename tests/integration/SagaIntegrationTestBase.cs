@@ -1,17 +1,20 @@
 ﻿// tests/integration/SagaIntegrationTestBase.cs
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
 using dnd_game.application.projections;
+using dnd_game.application.security;
+using dnd_game.domain.events;
 using dnd_game.domain.interfaces;
 using dnd_game.domain.sagas;
-using dnd_game.infrastructure.coordination;
-using dnd_game.infrastructure.event_store;
-using dnd_game.infrastructure.message_bus;
-using dnd_game.infrastructure.common;
 using dnd_game.infrastructure.caching;
+using dnd_game.infrastructure.common;
+using dnd_game.infrastructure.coordination;
+using dnd_game.infrastructure.message_bus;
 using dnd_game.tests.infrastructure;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
-using dnd_game.domain.events;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace dnd_game.tests.integration;
 
@@ -32,12 +35,22 @@ public abstract class SagaIntegrationTestBase
         SagaStateRepository = new InMemorySagaStateRepository();
         QuestTrackingStore = new InMemoryQuestTrackingStore();
 
-        // Создаём проекции с заглушкой ICacheProvider (NoOp)
         var cacheProvider = new NoOpCacheProvider();
         CharacterProjection = new CharacterProjection(cacheProvider, TimeSpan.FromMinutes(5));
         CampaignProjection = new CampaignProjection(cacheProvider, TimeSpan.FromMinutes(10));
 
-        // Регистрируем саги
+        // Создаём PermissionChecker с моками зависимостей
+        var permissionChecker = new PermissionChecker(
+            Mock.Of<IUserSecurityContextProvider>(),
+            Mock.Of<ICharacterOwnershipRepository>()
+        );
+
+        // Создаём InMemoryLockManager с корректными аргументами
+        var lockManager = new InMemoryLockManager(
+            permissionChecker,
+            NullLogger<InMemoryLockManager>.Instance
+        );
+
         var registry = new SagaRegistry();
         registry.Register<QuestAccepted>(e => new QuestSaga(
             e.QuestId,
@@ -63,43 +76,31 @@ public abstract class SagaIntegrationTestBase
             CampaignProjection,
             CharacterProjection,
             QuestTrackingStore));
-
+        registry.Register<CharacterDied>(e => new QuestSaga(
+            e.CharacterId, // Внимание: QuestSaga ожидает questId, но здесь передан characterId.
+            Bus,
+            CampaignProjection,
+            CharacterProjection,
+            QuestTrackingStore));
         registry.Register<ExperienceGained>(e => new LevelUpSaga(
             e.CharacterId,
             Bus,
             CharacterProjection));
 
-        // Регистрируем событие CharacterDied для QuestSaga (если нужно)
-        // registry.Register<CharacterDied>(e => new QuestSaga(...)); – но у нас нет конструктора с CharacterDied, 
-        // поэтому добавим позже при необходимости.
-
         Coordinator = new SagaCoordinator(
             registry,
             SagaStateRepository,
             Bus,
-            new InMemoryLockManager(Mock.Of<IServiceProvider>()),
+            lockManager,
             NullLogger<SagaCoordinator>.Instance);
-
-        // Подписываем Coordinator на все события через Bus
-        // В реальном проекте это делается в SagaRegistrations, но здесь мы делаем вручную.
-        // Для простоты будем вызывать Coordinator.DispatchAsync вручную после публикации событий.
     }
 
-    /// <summary>
-    /// Обёртка для публикации события с автоматическим обновлением проекций и запуском саг.
-    /// </summary>
     protected async Task PublishAndDispatch(IDomainEvent @event)
     {
-        // Применяем событие к проекциям (если они его поддерживают)
         ApplyToProjections(@event);
-
-        // Диспатчим событие через SagaCoordinator
         await Coordinator.DispatchAsync(@event);
     }
 
-    /// <summary>
-    /// Применяет событие к соответствующим проекциям.
-    /// </summary>
     private void ApplyToProjections(IDomainEvent @event)
     {
         // CharacterProjection

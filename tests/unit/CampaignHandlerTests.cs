@@ -21,6 +21,13 @@ public class CampaignHandlerTests
         _handler = new CampaignHandler(_eventStoreMock.Object);
     }
 
+    // Вспомогательный метод создания списка целей (хотя бы одна)
+    private static List<QuestObjectiveData> CreateTestObjectives()
+        => new()
+        {
+            new QuestObjectiveData { Description = "Test objective", RequiredProgress = 1 }
+        };
+
     [Fact]
     public async Task CreateQuest_CreatesQuestInCampaign_Saves()
     {
@@ -38,7 +45,8 @@ public class CampaignHandlerTests
             campaignId,
             questId,
             "Slay the Dragon",
-            new List<QuestObjectiveData>(),
+            "Description",
+            CreateTestObjectives(),
             new List<QuestRewardData>(),
             new List<Guid>());
 
@@ -57,7 +65,7 @@ public class CampaignHandlerTests
         var campaignId = Guid.NewGuid();
         var questId = Guid.NewGuid();
         var campaign = new CampaignAggregate(campaignId, "Test Campaign", Guid.NewGuid());
-        campaign.CreateQuest(questId, "Slay the Dragon", new List<QuestObjectiveData>(), new List<QuestRewardData>(), new List<Guid>());
+        campaign.CreateQuest(questId, "Slay the Dragon", "Description", CreateTestObjectives(), new List<QuestRewardData>(), new List<Guid>());
         campaign.ClearUncommittedEvents();
 
         _eventStoreMock
@@ -81,7 +89,7 @@ public class CampaignHandlerTests
         var campaignId = Guid.NewGuid();
         var questId = Guid.NewGuid();
         var campaign = new CampaignAggregate(campaignId, "Test Campaign", Guid.NewGuid());
-        campaign.CreateQuest(questId, "Slay the Dragon", new List<QuestObjectiveData>(), new List<QuestRewardData>(), new List<Guid>());
+        campaign.CreateQuest(questId, "Slay the Dragon", "Description", CreateTestObjectives(), new List<QuestRewardData>(), new List<Guid>());
         campaign.AcceptQuest(questId);
         campaign.ClearUncommittedEvents();
 
@@ -114,8 +122,4 @@ public class CampaignHandlerTests
         await Assert.ThrowsAsync<InvalidAction>(() => _handler.Handle(command, CancellationToken.None));
         _eventStoreMock.Verify(es => es.Save(It.IsAny<CampaignAggregate>(), It.IsAny<CancellationToken>()), Times.Never);
     }
-
-    // Аналогично для:
-    // - FailQuest
-    // - UpdateQuestObjective
 }

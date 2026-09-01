@@ -1,43 +1,19 @@
-// tests/unit/SagaCoordinatorRecoveryTests.cs
-using dnd_game.domain.events;
-using dnd_game.domain.sagas;
-using dnd_game.infrastructure.coordination;
-using dnd_game.infrastructure.common;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
+using dnd_game.application.security;
+using dnd_game.domain.events;
+using dnd_game.domain.interfaces;
+using dnd_game.domain.sagas;
+using dnd_game.infrastructure.coordination;
+using dnd_game.infrastructure.common;
 using dnd_game.infrastructure.message_bus;
 
 namespace dnd_game.tests.unit
 {
-    /// <summary>
-    /// ИСТОРИЯ (актуально на момент миграции под SagaCoordinator, см. Вариант A):
-    ///
-    /// Раньше TradeSaga/QuestSaga/LevelUpSaga формально реализовывали ISaga, но ни одна не была
-    /// зарегистрирована в ISagaRegistry, и ISagaDispatcher.DispatchAsync нигде не вызывался — то
-    /// есть саги были полностью отключены от реальных событий. Они управляли сразу множеством
-    /// сущностей (много сделок/квестов на один инстанс) через собственные словари состояния,
-    /// что не совместимо с моделью "один ISaga-инстанс на одну сущность", которую предполагает
-    /// SagaCoordinator/ISagaStateRepository.
-    ///
-    /// Это исправлено: TradeSaga/QuestSaga/LevelUpSaga/CombatSaga переписаны под модель "один
-    /// инстанс — одна сущность" (SagaId = OfferId/QuestId/CharacterId/CombatId), а
-    /// infrastructure/coordination/saga_registrations.cs регистрирует их фабрики в
-    /// ISagaRegistry и подписывает ISagaDispatcher на IEventBus. Прямые тесты на реальные саги —
-    /// см. TradeSagaRecoveryTests ниже. QuestSaga/LevelUpSaga/CombatSaga тем же методом можно
-    /// протестировать по аналогии, если понадобится более полное покрытие.
-    ///
-    /// Тест ниже (на минимальной тестовой саге, а не на реальных TradeSaga/QuestSaga) остаётся
-    /// полезным как чистая спецификация самого механизма восстановления SagaCoordinator, не
-    /// зависящая от бизнес-логики конкретной саги.
-    ///
-    /// Ниже — тест того же сценария на самом SagaCoordinator (реальный класс, который и должен
-    /// обеспечивать восстановление) с минимальной тестовой сагой, честно реализующей ISaga.
-    /// Он подтверждает, что МЕХАНИЗМ восстановления через ISagaStateRepository работает корректно,
-    /// и одновременно служит спецификацией: если TradeSaga/QuestSaga/LevelUpSaga когда-нибудь
-    /// переделают под модель "один инстанс на одну сущность" и зарегистрируют в ISagaRegistry,
-    /// этот же тест-паттерн можно будет применить и к ним напрямую.
-    /// </summary>
     public class SagaCoordinatorRecoveryTests
     {
         private record StepEvent(Guid CorrelationId, int Step, bool SimulateCrash) : IDomainEvent;
@@ -53,7 +29,6 @@ namespace dnd_game.tests.unit
             public int LastCompletedStep { get; set; }
         }
 
-        /// <summary>Честная реализация ISaga: один инстанс — одна сущность (один CorrelationId).</summary>
         private class StepProcessingSaga : ISaga
         {
             private StepTrackingSagaState _state;
@@ -91,11 +66,18 @@ namespace dnd_game.tests.unit
             registry = new SagaRegistry();
             registry.Register<StepEvent>(e => new StepProcessingSaga(e.CorrelationId));
 
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>());
+            var lockManager = new InMemoryLockManager(
+                permissionChecker,
+                NullLogger<InMemoryLockManager>.Instance);
+
             return new SagaCoordinator(
                 registry,
                 stateRepository,
                 Mock.Of<ICommandBus>(),
-                new InMemoryLockManager(Mock.Of<IServiceProvider>()),
+                lockManager,
                 NullLogger<SagaCoordinator>.Instance);
         }
 
@@ -106,7 +88,6 @@ namespace dnd_game.tests.unit
             var coordinator = CreateCoordinator(stateRepository, out _);
             var correlationId = Guid.NewGuid();
 
-            // Шаг 1: обрабатывается успешно и сохраняется.
             await coordinator.DispatchAsync(new StepEvent(correlationId, Step: 1, SimulateCrash: false));
 
             var afterStep1 = await stateRepository.LoadAsync(correlationId);
@@ -115,18 +96,13 @@ namespace dnd_game.tests.unit
             Assert.Equal(1, step1State.LastCompletedStep);
             Assert.Equal(SagaStatus.InProgress, step1State.Status);
 
-            // Шаг 2: "падает" (например, сбой процесса на этом шаге).
             await coordinator.DispatchAsync(new StepEvent(correlationId, Step: 2, SimulateCrash: true));
 
             var afterCrash = await stateRepository.LoadAsync(correlationId);
             var crashedState = Assert.IsType<StepTrackingSagaState>(afterCrash);
-            // Прогресс шага 1 не потерян, несмотря на падение на шаге 2.
             Assert.Equal(1, crashedState.LastCompletedStep);
             Assert.Equal(SagaStatus.Failed, crashedState.Status);
 
-            // "Перезапуск": повторно диспатчим тот же шаг 2, на этот раз без сбоя.
-            // Новый инстанс саги создаётся заново (через фабрику), но восстанавливает состояние
-            // из ISagaStateRepository — это и есть механизм восстановления после падения.
             await coordinator.DispatchAsync(new StepEvent(correlationId, Step: 2, SimulateCrash: false));
 
             var afterRecovery = await stateRepository.LoadAsync(correlationId);
@@ -151,15 +127,12 @@ namespace dnd_game.tests.unit
         [Fact]
         public async Task UnregisteredEventType_DispatchesToNoSaga_AndDoesNotThrow()
         {
-            // Это как раз то, что сегодня происходит с TradeFailed/QuestCompleted/ExperienceGained:
-            // ни один фактор не зарегистрирован для TradeSaga/QuestSaga/LevelUpSaga, поэтому
-            // DispatchAsync просто не находит фабрик и ничего не делает.
             var stateRepository = new InMemorySagaStateRepository();
             var coordinator = CreateCoordinator(stateRepository, out _);
 
             var unrelatedEvent = new UnrelatedTestEvent();
 
-            await coordinator.DispatchAsync(unrelatedEvent); // не должно бросать
+            await coordinator.DispatchAsync(unrelatedEvent);
         }
 
         private record UnrelatedTestEvent : IDomainEvent;

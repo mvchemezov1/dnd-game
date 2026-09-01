@@ -150,4 +150,69 @@ public class InMemoryEventStore : IEventStore
         // Для тестов не требуется
         return Task.CompletedTask;
     }
+
+    Task<IEnumerable<object>> IEventStore.GetAllEvents(CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task IEventStore.Save<T>(T aggregate, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<T?> IEventStore.Load<T>(Guid aggregateId, CancellationToken cancellationToken) where T : class
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<IEnumerable<object>> IEventStore.GetEvents(Guid aggregateId, int fromVersion, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task IEventStore.SaveWithMetadata<T>(T aggregate, EventMetadata metadata, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<T?> IEventStore.LoadWithMetadata<T>(Guid aggregateId, CancellationToken cancellationToken) where T : class
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<IEnumerable<StoredEvent>> IEventStore.GetEventStreamAsync(Guid aggregateId, ReadStreamOptions? options, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task IEventStore.SaveSnapshotAsync(Snapshot snapshot, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<Snapshot?> IEventStore.GetLatestSnapshotAsync(Guid aggregateId, int maxVersion, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<IEnumerable<StoredEvent>> IEventStore.GetEventsByTypeAsync(string eventType, DateTime? from, DateTime? to, int? maxCount, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<IEnumerable<StoredEvent>> IEventStore.GetEventsBySessionAsync(Guid gameSessionId, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task<int> IEventStore.GetCurrentVersionAsync(Guid aggregateId, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
+
+    Task IEventStore.SubscribeAsync(Func<StoredEvent, CancellationToken, Task> handler, CancellationToken cancellationToken)
+    {
+        throw new NotImplementedException();
+    }
 }

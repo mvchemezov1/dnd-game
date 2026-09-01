@@ -1,7 +1,9 @@
 // tests/loadtest/Program.cs
+using dnd_game.application.security;
 using dnd_game.domain.aggregates;
-using dnd_game.infrastructure.event_store;
+using dnd_game.domain.events;
 using dnd_game.infrastructure.coordination;
+using dnd_game.infrastructure.event_store;
 using dnd_game.infrastructure.message_bus;
 using dnd_game.infrastructure.monitoring;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -12,7 +14,6 @@ using System.Net.Http.Headers;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
-using dnd_game.domain.events;
 
 namespace dnd_game.tests.loadtest;
 
@@ -85,7 +86,11 @@ public static class Program
         var metricsCollector = Mock.Of<IMetricsCollector>();
         var consistencyManager = new ConsistencyManager(
             serviceProvider,
-            new InMemoryLockManager(serviceProvider),
+            new InMemoryLockManager(
+            new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>()),
+            NullLogger<InMemoryLockManager>.Instance),
             NullLogger<ConsistencyManager>.Instance,
             metricsCollector);
 

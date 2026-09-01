@@ -1,53 +1,39 @@
-// tests/unit/TradeSagaTests.cs
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Xunit;
 using dnd_game.application.projections;
+using dnd_game.application.security;
 using dnd_game.domain.commands;
 using dnd_game.domain.events;
 using dnd_game.domain.interfaces;
 using dnd_game.domain.sagas;
-using dnd_game.infrastructure.message_bus;
 using dnd_game.infrastructure.caching;
-using dnd_game.infrastructure.common;
 using dnd_game.infrastructure.coordination;
-using Microsoft.Extensions.Logging.Abstractions;
-using Moq;
-using Xunit;
+using dnd_game.infrastructure.common;
+using dnd_game.infrastructure.message_bus;
 
 namespace dnd_game.tests.unit
 {
-    /// <summary>
-    /// Тесты на реальную TradeSaga через реальный SagaCoordinator — после миграции под
-    /// модель "один инстанс = одна сделка" (SagaId = OfferId), см. domain/sagas/trade_saga.cs
-    /// и infrastructure/coordination/saga_registrations.cs.
-    ///
-    /// Gold-часть сделки здесь не тестируется отдельным сценарием "не хватает золота", потому
-    /// что CharacterProjection сейчас не имеет Apply-обработчика для событий изменения золота —
-    /// Gold в проекции всегда 0. Это отдельный, самостоятельный пробел в проекции, не связанный
-    /// с миграцией саги, поэтому тесты ниже работают только с предметами (без золота).
-    /// </summary>
     public class TradeSagaTests
     {
-        private static bool IsRemoveInventoryItem(ICommand c, Guid characterId, string itemId)
-    => c is RemoveInventoryItem r && r.CharacterId == characterId && r.ItemId == itemId;
-
-        private static bool IsAddInventoryItem(ICommand c, Guid characterId, string itemId)
-            => c is AddInventoryItem a && a.CharacterId == characterId && a.ItemId == itemId;
-
-        private static bool IsRemoveInventoryItem(ICommand c, Guid characterId)
-            => c is RemoveInventoryItem r && r.CharacterId == characterId;
+        private static TradeItem CreateItem(string id, string name, int qty = 1)
+            => new() { ItemId = id, ItemName = name, Quantity = qty };
 
         private static (SagaCoordinator coordinator, InMemorySagaStateRepository stateRepository, Mock<ICommandBus> commandBus, CharacterProjection characterProjection)
-    CreateSut()
+            CreateSut()
         {
             var stateRepository = new InMemorySagaStateRepository();
             var registry = new SagaRegistry();
             var commandBusMock = new Mock<ICommandBus>();
             var eventBusMock = new Mock<IEventBus>();
 
-            // Заглушка для ICacheProvider (можно использовать NoOpCacheProvider из Infrastructure.Caching)
             var cacheProvider = new NoOpCacheProvider();
             var characterProjection = new CharacterProjection(cacheProvider, TimeSpan.FromMinutes(5));
 
-            // Регистрируем фабрики с ПРАВИЛЬНЫМ количеством аргументов (4)
             registry.Register<TradeOfferCreated>(e => new TradeSaga(
                 e.OfferId,
                 commandBusMock.Object,
@@ -67,11 +53,18 @@ namespace dnd_game.tests.unit
                 characterProjection
             ));
 
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>());
+            var lockManager = new InMemoryLockManager(
+                permissionChecker,
+                NullLogger<InMemoryLockManager>.Instance);
+
             var coordinator = new SagaCoordinator(
                 registry,
                 stateRepository,
                 commandBusMock.Object,
-                new InMemoryLockManager(Mock.Of<IServiceProvider>()),
+                lockManager,
                 NullLogger<SagaCoordinator>.Instance
             );
 
@@ -96,8 +89,8 @@ namespace dnd_game.tests.unit
 
             await coordinator.DispatchAsync(new TradeOfferCreated(
                 offerId, fromId, toId,
-                OfferedItems: [new TradeItem("sword-1", "Iron Sword", 1)], OfferedGold: 0,
-                RequestedItems: [new TradeItem("shield-1", "Wooden Shield", 1)], RequestedGold: 0,
+                OfferedItems: new List<TradeItem> { CreateItem("sword-1", "Iron Sword") }, OfferedGold: 0,
+                RequestedItems: new List<TradeItem> { CreateItem("shield-1", "Wooden Shield") }, RequestedGold: 0,
                 OccurredOn: DateTime.UtcNow));
 
             var state = await stateRepository.LoadAsync(offerId);
@@ -118,8 +111,8 @@ namespace dnd_game.tests.unit
 
             await coordinator.DispatchAsync(new TradeOfferCreated(
                 offerId, fromId, toId,
-                OfferedItems: [new TradeItem("sword-1", "Iron Sword", 1)], OfferedGold: 0,
-                RequestedItems: [new TradeItem("shield-1", "Wooden Shield", 1)], RequestedGold: 0,
+                OfferedItems: new List<TradeItem> { CreateItem("sword-1", "Iron Sword") }, OfferedGold: 0,
+                RequestedItems: new List<TradeItem> { CreateItem("shield-1", "Wooden Shield") }, RequestedGold: 0,
                 OccurredOn: DateTime.UtcNow));
 
             await coordinator.DispatchAsync(new TradeOfferAccepted(offerId, DateTime.UtcNow));
@@ -128,8 +121,6 @@ namespace dnd_game.tests.unit
             Assert.NotNull(state);
             Assert.Equal(SagaStatus.Completed, state!.Status);
 
-            // Обе стороны должны были получить встречный предмет: 4 команды AddInventoryItem/
-            // RemoveInventoryItem с каждой стороны (списание своего + начисление чужого).
             commandBus.Verify(cb => cb.SendAsync(
                 It.Is<ICommand>(c => IsRemoveInventoryItem(c, fromId, "sword-1")),
                 It.IsAny<CommandContext>()), Times.Once);
@@ -152,13 +143,12 @@ namespace dnd_game.tests.unit
             var fromId = Guid.NewGuid();
             var toId = Guid.NewGuid();
             SeedCharacterWithItem(characterProjection, fromId, "sword-1", "Iron Sword", 1);
-            // toId НЕ владеет запрошенным предметом — сделка должна провалиться до списаний.
             characterProjection.Apply(new CharacterCreated(toId, "Trader 2", 10, DateTime.UtcNow));
 
             await coordinator.DispatchAsync(new TradeOfferCreated(
                 offerId, fromId, toId,
-                OfferedItems: [new TradeItem("sword-1", "Iron Sword", 1)], OfferedGold: 0,
-                RequestedItems: [new TradeItem("shield-1", "Wooden Shield", 1)], RequestedGold: 0,
+                OfferedItems: new List<TradeItem> { CreateItem("sword-1", "Iron Sword") }, OfferedGold: 0,
+                RequestedItems: new List<TradeItem> { CreateItem("shield-1", "Wooden Shield") }, RequestedGold: 0,
                 OccurredOn: DateTime.UtcNow));
 
             await coordinator.DispatchAsync(new TradeOfferAccepted(offerId, DateTime.UtcNow));
@@ -167,7 +157,6 @@ namespace dnd_game.tests.unit
             Assert.NotNull(state);
             Assert.Equal(SagaStatus.Failed, state!.Status);
 
-            // Ни одна сторона не должна была потерять свой предмет при неуспешной сделке.
             commandBus.Verify(cb => cb.SendAsync(
                 It.Is<ICommand>(c => IsRemoveInventoryItem(c, fromId)),
                 It.IsAny<CommandContext>()), Times.Never);
@@ -185,8 +174,8 @@ namespace dnd_game.tests.unit
 
             await coordinator.DispatchAsync(new TradeOfferCreated(
                 offerId, fromId, toId,
-                OfferedItems: [new TradeItem("sword-1", "Iron Sword", 1)], OfferedGold: 0,
-                RequestedItems: [new TradeItem("shield-1", "Wooden Shield", 1)], RequestedGold: 0,
+                OfferedItems: new List<TradeItem> { CreateItem("sword-1", "Iron Sword") }, OfferedGold: 0,
+                RequestedItems: new List<TradeItem> { CreateItem("shield-1", "Wooden Shield") }, RequestedGold: 0,
                 OccurredOn: DateTime.UtcNow));
 
             await coordinator.DispatchAsync(new TradeOfferDeclined(offerId, DateTime.UtcNow));
@@ -200,9 +189,6 @@ namespace dnd_game.tests.unit
         [Fact]
         public async Task TwoIndependentOffers_TrackSeparateState_ByOfferId()
         {
-            // Регрессионный тест на исходную проблему: раньше один TradeSaga-инстанс вёл сразу
-            // много сделок в своём _activeTrades. Теперь каждая сделка обязана иметь собственное,
-            // независимое состояние в ISagaStateRepository, адресуемое по OfferId.
             var (coordinator, stateRepository, _, characterProjection) = CreateSut();
             var offerA = Guid.NewGuid();
             var offerB = Guid.NewGuid();
@@ -217,13 +203,13 @@ namespace dnd_game.tests.unit
 
             await coordinator.DispatchAsync(new TradeOfferCreated(
                 offerA, fromA, toA,
-                OfferedItems: [new TradeItem("item-a", "Item A", 1)], OfferedGold: 0,
-                RequestedItems: [new TradeItem("item-b", "Item B", 1)], RequestedGold: 0,
+                OfferedItems: new List<TradeItem> { CreateItem("item-a", "Item A") }, OfferedGold: 0,
+                RequestedItems: new List<TradeItem> { CreateItem("item-b", "Item B") }, RequestedGold: 0,
                 OccurredOn: DateTime.UtcNow));
             await coordinator.DispatchAsync(new TradeOfferCreated(
                 offerB, fromB, toB,
-                OfferedItems: [new TradeItem("item-c", "Item C", 1)], OfferedGold: 0,
-                RequestedItems: [new TradeItem("item-d", "Item D", 1)], RequestedGold: 0,
+                OfferedItems: new List<TradeItem> { CreateItem("item-c", "Item C") }, OfferedGold: 0,
+                RequestedItems: new List<TradeItem> { CreateItem("item-d", "Item D") }, RequestedGold: 0,
                 OccurredOn: DateTime.UtcNow));
 
             var stateA = await stateRepository.LoadAsync(offerA);
@@ -233,5 +219,14 @@ namespace dnd_game.tests.unit
             Assert.NotNull(stateB);
             Assert.NotEqual(stateA!.SagaId, stateB!.SagaId);
         }
+
+        private static bool IsRemoveInventoryItem(ICommand c, Guid characterId, string itemId)
+            => c is RemoveInventoryItem r && r.CharacterId == characterId && r.ItemId == itemId;
+
+        private static bool IsAddInventoryItem(ICommand c, Guid characterId, string itemId)
+            => c is AddInventoryItem a && a.CharacterId == characterId && a.ItemId == itemId;
+
+        private static bool IsRemoveInventoryItem(ICommand c, Guid characterId)
+            => c is RemoveInventoryItem r && r.CharacterId == characterId;
     }
 }

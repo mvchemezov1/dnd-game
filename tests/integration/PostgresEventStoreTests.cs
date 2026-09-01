@@ -1,7 +1,8 @@
 // tests/integration/PostgresEventStoreTests.cs
+using dnd_game.application.security;
 using dnd_game.domain.aggregates;
-using dnd_game.infrastructure.event_store;
 using dnd_game.infrastructure.coordination;
+using dnd_game.infrastructure.event_store;
 using dnd_game.infrastructure.message_bus;
 using dnd_game.infrastructure.monitoring;
 using Microsoft.Extensions.Logging;
@@ -33,23 +34,24 @@ namespace dnd_game.tests.integration
             var config = new SnapshotConfiguration { EventCountInterval = snapshotEventInterval };
             var snapshots = new SnapshotStore(ConnectionString!, config);
 
-            // ConsistencyManager резолвит IEventStore лениво и только для проверки
-            // concentration-инварианта CharacterAggregate — в этих тестах он не используется,
-            // поэтому достаточно заглушки.
             var serviceProviderMock = new Mock<IServiceProvider>();
             serviceProviderMock.Setup(sp => sp.GetService(typeof(IEventStore))).Returns((IEventStore?)null);
 
-            // Создаём моки для недостающих зависимостей ConsistencyManager
+            var permissionChecker = new PermissionChecker(
+                Mock.Of<IUserSecurityContextProvider>(),
+                Mock.Of<ICharacterOwnershipRepository>()
+            );
+            var lockManager = new InMemoryLockManager(permissionChecker, NullLogger<InMemoryLockManager>.Instance);
+
             var loggerMock = new Mock<ILogger<ConsistencyManager>>();
             var metricsMock = new Mock<IMetricsCollector>();
 
             var consistencyManager = new ConsistencyManager(
                 serviceProviderMock.Object,
-                new InMemoryLockManager(serviceProviderMock.Object),
+                lockManager,
                 loggerMock.Object,
                 metricsMock.Object);
 
-            // Для PostgresEventStore тоже нужны логгер и метрики
             var storeLoggerMock = new Mock<ILogger<PostgresEventStore>>();
             var storeMetricsMock = new Mock<IMetricsCollector>();
             var eventBusMock = new Mock<IEventBus>();
