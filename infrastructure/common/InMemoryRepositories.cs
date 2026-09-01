@@ -305,6 +305,7 @@ namespace dnd_game.infrastructure.common
 
         public Task<bool> TrySaveAsync(ISagaState state, int expectedVersion, CancellationToken cancellationToken = default)
         {
+            ArgumentNullException.ThrowIfNull(state);
             cancellationToken.ThrowIfCancellationRequested();
             lock (_lock)
             {
@@ -313,11 +314,9 @@ namespace dnd_game.infrastructure.common
                     if (existing.Version != expectedVersion)
                         return Task.FromResult(false);
                 }
-                else
+                else if (expectedVersion != 0)
                 {
-                    // Если состояния нет, а expectedVersion != 0, то конфликт
-                    if (expectedVersion != 0)
-                        return Task.FromResult(false);
+                    return Task.FromResult(false);
                 }
 
                 _states[state.SagaId] = state;

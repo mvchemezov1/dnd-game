@@ -76,6 +76,7 @@ public class RestHandlerTests
         var character = new CharacterAggregate(characterId, "Hero", 20);
         // Устанавливаем кости хитов (например, 4d8)
         character.SetHitDice(new Dictionary<int, int> { { 8, 4 } });
+        character.StartRest("Short");
         character.ClearUncommittedEvents();
 
         _eventStoreMock
