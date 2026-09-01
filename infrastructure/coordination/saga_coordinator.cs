@@ -110,37 +110,10 @@ namespace dnd_game.infrastructure.coordination
 
                 try
                 {
-                    bool saved = false;
-                    int attempt = 0;
-                    const int maxAttempts = 3;
+                    await saga.Handle(@event, cancellationToken);
 
-                    while (!saved && attempt < maxAttempts)
-                    {
-                        attempt++;
-                        // Обрабатываем событие
-                        await saga.Handle(@event, cancellationToken);
-
-                        // Увеличиваем версию
-                        int expectedVersion = saga.State.Version;
-                        saga.State.Version++;
-
-                        // Пытаемся сохранить с проверкой версии
-                        saved = await _stateRepository.TrySaveAsync(saga.State, expectedVersion, cancellationToken);
-
-                        if (!saved)
-                        {
-                            _logger.LogWarning("Конфликт версий при сохранении саги {SagaId}, попытка {Attempt}.", saga.SagaId, attempt);
-                            // Перезагружаем актуальное состояние и повторяем
-                            var latestState = await _stateRepository.LoadAsync(saga.SagaId, cancellationToken);
-                            if (latestState != null)
-                                saga.LoadState(latestState);
-                        }
-                    }
-
-                    if (!saved)
-                    {
-                        throw new InvalidOperationException($"Не удалось сохранить сагу {saga.SagaId} после {maxAttempts} попыток из-за конфликтов версий.");
-                    }
+                    saga.State.Version++;
+                    await _stateRepository.SaveAsync(saga.State, cancellationToken);
 
                     _logger.LogInformation("Сага {SagaId} успешно обработала событие {EventType}.", saga.SagaId, @event.GetType().Name);
                 }
