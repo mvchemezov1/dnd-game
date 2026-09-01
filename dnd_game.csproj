@@ -1,0 +1,63 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+	<PropertyGroup>
+		<TargetFramework>net8.0</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<UserSecretsId>4496aae1-b62f-464c-8d5a-d88a8bc38ebb</UserSecretsId>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<!-- Исключаем тестовые папки из основного проекта -->
+		<Compile Remove="tests\**\*.cs" />
+		<EmbeddedResource Remove="tests\**\*" />
+		<None Remove="tests\**\*" />
+		<Content Remove="tests\**\*" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<!-- Оставьте только нужные пакеты для основного проекта -->
+		<PackageReference Include="dbup" Version="5.0.41" />
+		<PackageReference Include="dbup-postgresql" Version="7.0.1" />
+		<PackageReference Include="FluentValidation.AspNetCore" Version="11.3.1" />
+		<PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+		<PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="6.0.20" />
+		<PackageReference Include="Microsoft.IdentityModel.Tokens" Version="8.22.0" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+		<PackageReference Include="Npgsql" Version="10.0.3" />
+		<PackageReference Include="OpenTelemetry" Version="1.17.0" />
+		<PackageReference Include="RabbitMQ.Client" Version="7.2.1" />
+		<PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
+		<PackageReference Include="Serilog.Sinks.Console" Version="6.1.1" />
+		<PackageReference Include="Serilog.Sinks.Elasticsearch" Version="10.0.0" />
+		<PackageReference Include="Serilog.Sinks.Loki" Version="3.0.0" />
+		<PackageReference Include="StackExchange.Redis" Version="3.1.13" />
+		<PackageReference Include="Swashbuckle.AspNetCore" Version="6.5.0" />
+		<PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.22.0" />
+		<!-- Удалите из основного проекта тестовые пакеты: Moq, xunit.assert -->
+	</ItemGroup>
+
+	<ItemGroup>
+		<None Include="migrations/*.sql">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+	
+	<ItemGroup>
+		<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+			<_Parameter1>dnd_game.Tests</_Parameter1>
+		</AssemblyAttribute>
+		<AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleTo">
+			<_Parameter1>dnd_game.LoadTest</_Parameter1>
+		</AssemblyAttribute>
+	</ItemGroup>
+	
+	<ItemGroup>
+	  <Folder Include="logs\" />
+	</ItemGroup>
+
+	<PropertyGroup>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<NoWarn>$(NoWarn);1591</NoWarn>
+		<!-- подавляет предупреждения о недостающих комментариях -->
+	</PropertyGroup>
+</Project>

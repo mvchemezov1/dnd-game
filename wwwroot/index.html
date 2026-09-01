@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="description" content="Игровой стол для Dungeons & Dragons — управляйте персонажами, боем, кампанией и мастерскими инструментами в реальном времени.">
+    <meta name="theme-color" content="#1e1e2f">
+    <title>DnD — игровой стол</title>
+
+    <!-- Предзагрузка критических стилей -->
+    <link rel="preload" href="css/styles.css" as="style">
+    <link rel="stylesheet" href="css/styles.css">
+
+    <!-- Инлайновый минимальный CSS для быстрого старта и индикатора загрузки -->
+    <style>
+        /* Критический CSS для предотвращения FOUC и отображения спиннера */
+        :root {
+            --bg: #12121c;
+            --surface: #1e1e2f;
+            --primary: #7c5cfc;
+            --text: #eaeaf2;
+            --text-muted: #8a8aa3;
+        }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+        }
+
+        #app-loading {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: var(--bg);
+            z-index: 9999;
+        }
+
+        .spinner {
+            width: 48px;
+            height: 48px;
+            border: 5px solid var(--surface);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0,0,0,0);
+            white-space: nowrap;
+            border: 0;
+        }
+
+        .skip-link {
+            position: absolute;
+            left: -999px;
+            top: 0;
+            background: var(--primary);
+            color: white;
+            padding: 0.75rem 1.5rem;
+            z-index: 10000;
+        }
+
+            .skip-link:focus {
+                left: 0;
+            }
+        /* Базовая мобильная навигация */
+        #sidebar-toggle {
+            display: none;
+            background: var(--surface);
+            border: 1px solid #2e2e42;
+            color: var(--text);
+            font-size: 1.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            #sidebar-toggle {
+                display: block;
+            }
+
+            .sidebar {
+                position: fixed;
+                left: 0;
+                top: 60px;
+                bottom: 0;
+                width: 280px;
+                transform: translateX(-100%);
+                transition: transform 0.2s ease;
+                z-index: 100;
+            }
+
+                .sidebar.open {
+                    transform: translateX(0);
+                }
+        }
+    </style>
+</head>
+<body>
+    <!-- Ссылка для пропуска навигации (доступность) -->
+    <a class="skip-link" href="#main-content">Перейти к содержимому</a>
+
+    <!-- Индикатор загрузки приложения -->
+    <div id="app-loading" aria-live="polite" aria-label="Загрузка приложения">
+        <div class="spinner" role="status"></div>
+    </div>
+
+    <!-- Контейнер для всплывающих уведомлений -->
+    <div id="toasts" class="toasts" aria-live="polite" aria-atomic="true" aria-label="Уведомления"></div>
+
+    <!-- Корневой контейнер для модальных окон -->
+    <div id="modal-root"></div>
+
+    <!-- Предупреждение, если JavaScript отключён -->
+    <noscript>
+        <div style="position: fixed; inset: 0; background: #1e1e2f; color: #fff; display: flex; align-items: center; justify-content: center; z-index: 10000; padding: 2rem; text-align: center;">
+            <p>Для работы приложения необходимо включить JavaScript.</p>
+        </div>
+    </noscript>
+
+    <div id="app">
+
+        <!-- ЭКРАН АВТОРИЗАЦИИ -->
+        <section id="auth-screen" class="auth-screen hidden" aria-labelledby="auth-title">
+            <div class="auth-card">
+                <h1 id="auth-title">⚔️ DnD стол</h1>
+
+                <div class="tabs" id="auth-tabs" role="tablist">
+                    <button class="tab active" data-tab="login" role="tab" aria-selected="true" aria-controls="login-panel">Вход</button>
+                    <button class="tab" data-tab="register" role="tab" aria-selected="false" aria-controls="register-panel">Регистрация</button>
+                </div>
+
+                <!-- Форма входа -->
+                <form id="login-form" class="auth-form" role="tabpanel" aria-labelledby="login-tab">
+                    <label for="login-username">Имя пользователя</label>
+                    <input id="login-username" required name="username" autocomplete="username">
+                    <label for="login-password">Пароль</label>
+                    <input id="login-password" required type="password" name="password" autocomplete="current-password">
+                    <div class="form-error" id="login-error" aria-live="polite"></div>
+                    <button type="submit" class="btn btn-primary">Войти</button>
+                </form>
+
+                <!-- Форма регистрации -->
+                <form id="register-form" class="auth-form hidden" role="tabpanel" aria-labelledby="register-tab">
+                    <label for="register-username">Имя пользователя</label>
+                    <input id="register-username" required name="username">
+                    <label for="register-email">Email</label>
+                    <input id="register-email" required type="email" name="email" autocomplete="email">
+                    <label for="register-password">Пароль</label>
+                    <input id="register-password" required type="password" name="password" autocomplete="new-password">
+                    <div class="hint">Минимум 8 символов, заглавная и строчная буква, цифра и спецсимвол.</div>
+                    <div class="form-error" id="register-error" aria-live="polite"></div>
+                    <button type="submit" class="btn btn-primary">Создать аккаунт</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- ОСНОВНОЙ ИНТЕРФЕЙС -->
+        <div id="main-shell" class="shell hidden">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <!-- Кнопка мобильного меню (видна только на мобильных) -->
+                    <button id="sidebar-toggle" aria-label="Переключить меню" aria-expanded="false" aria-controls="sidebar">
+                        ☰
+                    </button>
+                    <span class="brand">⚔️ DnD стол</span>
+                    <span id="ws-status" class="ws-status ws-off" title="Статус соединения реального времени" role="status" aria-live="polite">
+                        ● офлайн
+                    </span>
+                </div>
+                <div class="topbar-right">
+                    <label class="session-field" for="session-id-input">
+                        ID кампании (сессии)
+                        <input id="session-id-input" placeholder="вставьте GUID кампании">
+                    </label>
+                    <span id="user-badge" class="user-badge" aria-live="polite"></span>
+                    <button id="logout-btn" class="btn btn-ghost">Выйти</button>
+                </div>
+            </header>
+
+            <div class="body-wrap">
+                <!-- Навигация -->
+                <nav id="sidebar" class="sidebar" aria-label="Основная навигация"></nav>
+
+                <!-- Основное содержимое -->
+                <main id="view-root" class="view-root" tabindex="-1">
+                    <!-- Здесь будет рендериться активный вид -->
+                </main>
+            </div>
+
+            <!-- Подвал с версией и дополнительной информацией -->
+            <footer class="app-footer hidden-on-mobile">
+                <div class="footer-left">DnD стол v1.0.0</div>
+                <div class="footer-right">
+                    <span id="connection-latency">— мс</span>
+                </div>
+            </footer>
+        </div>
+    </div>
+
+    <!-- Скрипты приложения -->
+    <script src="js/i18n.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/store.js"></script>
+    <script src="js/ui.js"></script>
+    <script src="js/views/auth.js"></script>
+    <script src="js/views/characters.js"></script>
+    <script src="js/views/sheet.js"></script>
+    <script src="js/views/combat.js"></script>
+    <script src="js/views/campaign.js"></script>
+    <script src="js/views/dm.js"></script>
+    <script src="js/views/admin.js"></script>
+    <script src="js/views/crafting.js"></script>
+    <script src="js/views/trade.js"></script>
+    <script src="js/views/dialog.js"></script>
+    <script src="js/views/travel.js"></script>
+    <script src="js/views/dev.js"></script>
+    <script src="js/app.js"></script>
+
+    <!-- Инициализация: скрыть спиннер после загрузки приложения (будет выполнено в app.js) -->
+    <script>
+        // Этот код выполнится после загрузки и инициализации app.js.
+        // app.js должен вызвать window.hideLoadingIndicator() когда всё готово.
+        window.hideLoadingIndicator = function () {
+            const loader = document.getElementById('app-loading');
+            if (loader) {
+                loader.style.opacity = '0';
+                setTimeout(() => loader.remove(), 300);
+            }
+        };
+        // Fallback: если app.js не вызовет hideLoadingIndicator через 5 секунд, скрываем принудительно.
+        setTimeout(() => {
+            const loader = document.getElementById('app-loading');
+            if (loader) loader.remove();
+        }, 5000);
+    </script>
+</body>
+</html>

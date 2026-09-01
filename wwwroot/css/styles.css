@@ -1,0 +1,792 @@
+/* =====================================================================
+   DnD Игровой стол — основные стили
+   ===================================================================== */
+
+:root {
+    /* Цвета фона */
+    --bg: #15171c;
+    --bg-2: #1c1f27;
+    --bg-3: #252935;
+    --border: #333846;
+    /* Текст */
+    --text: #e8e9ee;
+    --text-dim: #9aa0b0;
+    /* Акценты */
+    --accent: #c9902f;
+    --accent-2: #e0ac4b;
+    /* Статусные цвета */
+    --danger: #d1554b;
+    --success: #4caf7d;
+    --warn: #e0b23e;
+    --info: #4b8fe0;
+    /* Геометрия */
+    --radius: 10px;
+    --shadow: 0 4px 18px rgba(0, 0, 0, .35);
+    /* Шрифты */
+    --font-main: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    /* Прочее */
+    font-size: 15px;
+}
+
+/* Универсальный сброс */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-main);
+    min-height: 100vh;
+    line-height: 1.4;
+}
+
+/* Скрытие элемента */
+.hidden {
+    display: none !important;
+}
+
+/* Скрытие только на мобильных (используется для подвала) */
+.hidden-on-mobile {
+    display: block;
+}
+
+/* Утилита для скринридеров */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0,0,0,0);
+    white-space: nowrap;
+    border: 0;
+}
+
+button {
+    font-family: inherit;
+    cursor: pointer;
+    transition: background-color .15s ease, border-color .15s ease, transform .15s ease, opacity .15s ease;
+}
+
+input,
+select,
+textarea {
+    font-family: inherit;
+}
+
+/* Чёткий фокус для доступности */
+:focus-visible {
+    outline: 2px solid var(--accent-2);
+    outline-offset: 2px;
+}
+
+/* ---------- Кнопки ---------- */
+.btn {
+    border: 1px solid var(--border);
+    background: var(--bg-3);
+    color: var(--text);
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: .9rem;
+    transition: .15s;
+}
+
+    .btn:hover:not(:disabled) {
+        border-color: var(--accent-2);
+        transform: translateY(-1px);
+    }
+
+    .btn:active:not(:disabled) {
+        transform: translateY(0);
+    }
+
+.btn-primary {
+    background: linear-gradient(180deg, var(--accent-2), var(--accent));
+    color: #1a1305;
+    border: none;
+    font-weight: 600;
+}
+
+.btn-danger {
+    background: var(--danger);
+    border-color: var(--danger);
+    color: #fff;
+}
+
+.btn-success {
+    background: var(--success);
+    border-color: var(--success);
+    color: #06281a;
+}
+
+.btn-ghost {
+    background: transparent;
+}
+
+.btn-sm {
+    padding: 4px 9px;
+    font-size: .78rem;
+    border-radius: 6px;
+}
+
+.btn:disabled {
+    opacity: .4;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* ---------- Экран авторизации ---------- */
+.auth-screen {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: radial-gradient(circle at 30% 20%, #23283a, var(--bg) 70%);
+}
+
+.auth-card {
+    width: 100%;
+    max-width: 380px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px;
+    box-shadow: var(--shadow);
+}
+
+    .auth-card h1 {
+        margin: 0 0 18px;
+        text-align: center;
+        font-size: 1.4rem;
+    }
+
+.tabs {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 18px;
+    background: var(--bg-3);
+    border-radius: 8px;
+    padding: 4px;
+}
+
+.tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    padding: 8px;
+    border-radius: 6px;
+    font-size: .9rem;
+}
+
+    .tab.active {
+        background: var(--accent);
+        color: #1a1305;
+        font-weight: 600;
+    }
+
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+    .auth-form label {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        font-size: .82rem;
+        color: var(--text-dim);
+    }
+
+    .auth-form input {
+        padding: 9px 10px;
+        border-radius: 7px;
+        border: 1px solid var(--border);
+        background: var(--bg);
+        color: var(--text);
+        font-size: 1rem;
+    }
+
+.hint {
+    font-size: .75rem;
+    color: var(--text-dim);
+}
+
+.form-error {
+    color: var(--danger);
+    font-size: .82rem;
+    min-height: 1em;
+}
+
+/* ---------- Каркас приложения ---------- */
+.shell {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 10px 18px;
+    background: var(--bg-2);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.topbar-left,
+.topbar-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.brand {
+    font-weight: 700;
+    letter-spacing: .3px;
+}
+
+.ws-status {
+    font-size: .75rem;
+    padding: 3px 9px;
+    border-radius: 20px;
+    background: var(--bg-3);
+    white-space: nowrap;
+}
+
+.ws-off {
+    color: var(--danger);
+}
+
+.ws-on {
+    color: var(--success);
+}
+
+.session-field {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: .75rem;
+    color: var(--text-dim);
+}
+
+    .session-field input {
+        width: 230px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--bg-3);
+        color: var(--text);
+        font-size: .78rem;
+    }
+
+.user-badge {
+    font-size: .82rem;
+    background: var(--bg-3);
+    padding: 5px 10px;
+    border-radius: 20px;
+}
+
+.role-pill {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 8px;
+    border-radius: 20px;
+    font-size: .68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.role-Player {
+    background: #2d4a6b;
+    color: #bcd9ff;
+}
+
+.role-GameMaster {
+    background: #5a3a12;
+    color: #ffd699;
+}
+
+.role-Admin {
+    background: #5a1414;
+    color: #ffb3b3;
+}
+
+/* Основная область */
+.body-wrap {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+/* Сайдбар */
+.sidebar {
+    width: 210px;
+    background: var(--bg-2);
+    border-right: 1px solid var(--border);
+    padding: 14px 10px;
+    flex-shrink: 0;
+}
+
+.nav-group-label {
+    font-size: .68rem;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin: 14px 8px 6px;
+}
+
+.nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    padding: 9px 10px;
+    border-radius: 8px;
+    font-size: .88rem;
+    margin-bottom: 2px;
+    transition: background .15s, color .15s;
+}
+
+    .nav-btn:hover {
+        background: var(--bg-3);
+        color: var(--text);
+    }
+
+    .nav-btn.active {
+        background: var(--accent);
+        color: #1a1305;
+        font-weight: 600;
+    }
+
+.view-root {
+    flex: 1;
+    padding: 22px;
+    overflow-y: auto;
+    min-width: 0; /* чтобы таблицы не ломали раскладку */
+}
+
+/* ---------- Вспомогательные раскладки ---------- */
+.card {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 16px;
+}
+
+    .card h2 {
+        margin: 0 0 14px;
+        font-size: 1.05rem;
+    }
+
+    .card h3 {
+        margin: 0 0 10px;
+        font-size: .92rem;
+        color: var(--accent-2);
+    }
+
+.grid {
+    display: grid;
+    gap: 14px;
+}
+
+.grid-2 {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+}
+
+.grid-3 {
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.stack {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.spacer {
+    flex: 1;
+}
+
+.muted {
+    color: var(--text-dim);
+}
+
+.small {
+    font-size: .8rem;
+}
+
+.empty-state {
+    color: var(--text-dim);
+    font-style: italic;
+    padding: 14px 0;
+}
+
+.note {
+    background: #2b2410;
+    border: 1px solid #4d3f14;
+    color: #e6c877;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: .82rem;
+    margin-bottom: 14px;
+}
+
+/* Таблицы */
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+th,
+td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    font-size: .86rem;
+}
+
+th {
+    color: var(--text-dim);
+    font-weight: 600;
+    font-size: .75rem;
+    text-transform: uppercase;
+}
+
+tr:hover td {
+    background: rgba(255, 255, 255, .02);
+}
+
+/* Поля ввода */
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: .8rem;
+    color: var(--text-dim);
+}
+
+    .field input,
+    .field select,
+    .field textarea {
+        padding: 7px 9px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--bg-3);
+        color: var(--text);
+        font-size: .88rem;
+    }
+
+        .field input[type="number"] {
+            width: 100px;
+        }
+
+/* Плашки (пилюли) */
+.pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 20px;
+    font-size: .72rem;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+}
+
+.pill-danger {
+    background: rgba(209, 85, 75, .18);
+    color: #ff9a90;
+    border-color: transparent;
+}
+
+.pill-success {
+    background: rgba(76, 175, 125, .18);
+    color: #8ee3b6;
+    border-color: transparent;
+}
+
+.pill-warn {
+    background: rgba(224, 178, 62, .18);
+    color: #f3d585;
+    border-color: transparent;
+}
+
+.pill-info {
+    background: rgba(75, 143, 224, .18);
+    color: #a9cbf8;
+    border-color: transparent;
+}
+
+/* Полоса здоровья */
+.hp-bar {
+    height: 10px;
+    border-radius: 6px;
+    background: var(--bg-3);
+    overflow: hidden;
+    position: relative;
+}
+
+.hp-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #4caf7d, #7fd9a0);
+    transition: width .2s;
+}
+
+    .hp-bar-fill.low {
+        background: linear-gradient(90deg, #d1554b, #e88a80);
+    }
+
+    .hp-bar-fill.mid {
+        background: linear-gradient(90deg, var(--warn), #f3d585);
+    }
+
+/* Вкладки внутри контента */
+.tabs-inline {
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+}
+
+    .tabs-inline button {
+        background: none;
+        border: none;
+        color: var(--text-dim);
+        padding: 9px 14px;
+        font-size: .85rem;
+        border-bottom: 2px solid transparent;
+    }
+
+        .tabs-inline button.active {
+            color: var(--accent-2);
+            border-bottom-color: var(--accent-2);
+            font-weight: 600;
+        }
+
+/* Карточка персонажа */
+.char-card {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    cursor: pointer;
+    transition: .15s;
+}
+
+    .char-card:hover {
+        border-color: var(--accent-2);
+        transform: translateY(-2px);
+    }
+
+    .char-card h3 {
+        margin: 0 0 6px;
+        font-size: 1rem;
+        color: var(--text);
+    }
+
+/* Список тегов */
+.tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.tag {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 3px 10px;
+    font-size: .78rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+    .tag button {
+        background: none;
+        border: none;
+        color: var(--danger);
+        font-size: .85rem;
+        padding: 0;
+        line-height: 1;
+    }
+
+/* Модальные окна */
+.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, .55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    padding: 16px;
+}
+
+.modal-box {
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    width: 100%;
+    max-width: 440px;
+    box-shadow: var(--shadow);
+}
+
+    .modal-box h3 {
+        margin-top: 0;
+    }
+
+.modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+/* Уведомления (тосты) */
+.toasts {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 300;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.toast {
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--info);
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: .85rem;
+    box-shadow: var(--shadow);
+    max-width: 320px;
+    animation: slidein .15s ease-out;
+}
+
+    .toast.success {
+        border-left-color: var(--success);
+    }
+
+    .toast.error {
+        border-left-color: var(--danger);
+    }
+
+    .toast.event {
+        border-left-color: var(--accent-2);
+    }
+
+@keyframes slidein {
+    from {
+        opacity: 0;
+        transform: translateX(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+/* Боевой трекер */
+.combat-turn {
+    padding: 10px;
+    border-radius: 8px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+    .combat-turn.current {
+        border-color: var(--accent);
+        background: rgba(201, 144, 47, .12);
+    }
+
+/* Индикатор загрузки */
+.loading {
+    padding: 30px;
+    text-align: center;
+    color: var(--text-dim);
+}
+
+/* ---------- Адаптивность ---------- */
+@media (max-width: 820px) {
+    .body-wrap {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        display: flex;
+        overflow-x: auto;
+        padding: 8px;
+        gap: 4px;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .nav-group-label {
+        display: none;
+    }
+
+    .nav-btn {
+        white-space: nowrap;
+        width: auto;
+    }
+
+    .topbar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 8px;
+    }
+
+    .topbar-left,
+    .topbar-right {
+        justify-content: space-between;
+    }
+
+    .session-field input {
+        width: 100%;
+    }
+
+    .hidden-on-mobile {
+        display: none;
+    }
+}
+
+/* Уважение к предпочтению уменьшенной анимации */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+    }
+}

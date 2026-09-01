@@ -1,0 +1,5 @@
+# data/homebrew/custom_content.yaml
+items:
+  - id: magic-sword
+    name: Sword of Testing
+    damage: 2d6

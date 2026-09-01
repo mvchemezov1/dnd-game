@@ -1,0 +1,71 @@
+name: CI (Build & Test)
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: dnd_game
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build solution
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Run unit tests (no DB)
+        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName~Tests.Unit"
+
+      - name: Run integration tests (with PostgreSQL)
+        env:
+          DND_TEST_POSTGRES_CONNECTION: "Host=localhost;Database=dnd_game;Username=postgres;Password=postgres"
+        run: dotnet test --configuration Release --no-build --filter "FullyQualifiedName~Tests.Integration"
+
+      - name: Publish application
+        run: dotnet publish dnd_game.csproj --configuration Release --output ./publish
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnd-game-publish
+          path: ./publish
+          retention-days: 7
+
+      - name: Build Docker image
+        run: docker build -t dnd-game:${{ github.sha }} -f Dockerfile .
+
+      - name: Save Docker image (for later use)
+        run: docker save dnd-game:${{ github.sha }} -o dnd-game.tar
+
+      - name: Upload Docker image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnd-game-docker-image
+          path: dnd-game.tar
+          retention-days: 7

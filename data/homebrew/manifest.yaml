@@ -1,0 +1,4 @@
+# data/homebrew/manifest.yaml
+version: 1
+name: Homebrew Content
+description: Custom content for the campaign
