@@ -210,4 +210,258 @@
 
 ---
 
-Если нужно, могу детализировать любой пункт с примерами кода, диаграммами архитектуры или конкретными SQL-миграциями.
+1)
+
+## 1. БЭКЕНД
+
+### 1.1. Добавить `AbilityModifiers` в `CharacterDto`
+
+**Файл:** `application/projections/character_dto.cs`
+
+```csharp
+public record CharacterDto
+{
+    // ... существующие поля ...
+
+    /// <summary>Значения характеристик (Сила, Ловкость и т.д.).</summary>
+    public Dictionary<string, int> AbilityScores { get; init; } = [];
+
+    /// <summary>Модификаторы характеристик (автоматически вычисляются).</summary>
+    public Dictionary<string, int> AbilityModifiers { get; init; } = [];
+
+    // ... остальные поля ...
+}
+```
+
+### 1.2. Вычислять модификаторы в проекции
+
+**Файл:** `application/projections/character_projection.cs`
+
+При создании персонажа инициализируем модификаторы:
+
+```csharp
+public void Apply(CharacterCreated e)
+{
+    lock (_syncRoot)
+    {
+        var dto = new CharacterDto
+        {
+            Id = e.CharacterId,
+            Name = e.Name,
+            MaxHitPoints = e.MaxHitPoints,
+            HitPoints = e.MaxHitPoints,
+            HitDiceRemaining = new Dictionary<int, int> { { 8, 1 } },
+            MaxHitDice = new Dictionary<int, int> { { 8, 1 } },
+            // Инициализируем характеристики и модификаторы
+            AbilityScores = new Dictionary<string, int>
+            {
+                {"Strength", 10}, {"Dexterity", 10}, {"Constitution", 10},
+                {"Intelligence", 10}, {"Wisdom", 10}, {"Charisma", 10}
+            },
+            AbilityModifiers = new Dictionary<string, int>
+            {
+                {"Strength", 0}, {"Dexterity", 0}, {"Constitution", 0},
+                {"Intelligence", 0}, {"Wisdom", 0}, {"Charisma", 0}
+            }
+        };
+        _state[e.CharacterId] = dto;
+    }
+    InvalidateCache(e.CharacterId);
+}
+```
+
+При изменении характеристики пересчитываем модификатор:
+
+```csharp
+public void Apply(AbilityScoreSet e)
+{
+    ArgumentNullException.ThrowIfNull(e);
+    lock (_syncRoot)
+    {
+        if (_state.TryGetValue(e.CharacterId, out var dto))
+        {
+            var scores = new Dictionary<string, int>(dto.AbilityScores) { [e.Ability] = e.Score };
+            var modifiers = new Dictionary<string, int>(dto.AbilityModifiers);
+            modifiers[e.Ability] = ModifierCalculator.Calculate(e.Score);
+            
+            _state[e.CharacterId] = dto with 
+            { 
+                AbilityScores = scores, 
+                AbilityModifiers = modifiers 
+            };
+        }
+    }
+    InvalidateCache(e.CharacterId);
+}
+```
+
+> **Важно:** `ModifierCalculator` уже импортирован в проект (`using dnd_game.domain.value_objects;`), так что дополнительных `using` не требуется.
+
+### 1.3. (Опционально) Добавить вычисляемое свойство в агрегат
+
+**Файл:** `domain/aggregates/character_aggregate.cs`
+
+Это полезно, если другие доменные сервисы (например, расчёт AC или инициативы) будут обращаться к модификаторам:
+
+```csharp
+public class CharacterAggregate : AggregateRoot
+{
+    // ... существующие поля ...
+
+    public Dictionary<string, int> AbilityScores { get; private set; } = new()
+    {
+        {"Strength", 10}, {"Dexterity", 10}, {"Constitution", 10},
+        {"Intelligence", 10}, {"Wisdom", 10}, {"Charisma", 10}
+    };
+
+    /// <summary>Вычисленные модификаторы характеристик (только для чтения).</summary>
+    public Dictionary<string, int> AbilityModifiers => AbilityScores.ToDictionary(
+        kvp => kvp.Key,
+        kvp => ModifierCalculator.Calculate(kvp.Value)
+    );
+
+    // ... остальной код ...
+}
+```
+
+---
+
+## 2. ФРОНТЕНД
+
+### 2.1. Убрать дублирование расчёта в `sheet.js`
+
+**Файл:** `wwwroot/js/views/sheet.js`
+
+**Вкладка «Характеристики»** — заменить ручной расчёт на данные из API:
+
+```javascript
+// Было:
+const score = scores[a] ?? scores[a.toLowerCase()] ?? 10;
+const mod = Math.floor((score - 10) / 2);
+
+// Стало:
+const score = scores[a] ?? scores[a.toLowerCase()] ?? 10;
+const mod = char.abilityModifiers?.[a] 
+    ?? char.abilityModifiers?.[a.toLowerCase()] 
+    ?? Math.floor((score - 10) / 2); // fallback если API ещё не обновлён
+```
+
+### 2.2. Добавить отображение модификаторов на карточках персонажей
+
+**Файл:** `wwwroot/js/views/characters.js`
+
+В `cardHtml` добавить строку с ключевыми модификаторами (Сила, Ловкость, Телосложение — самые часто используемые в бою):
+
+```javascript
+function cardHtml(c) {
+    const isDead = c.isDead === true || c.isAlive === false;
+    const level = c.level ?? '?';
+    const race = c.race || '—';
+    const className = c.class || '';
+    const armorClass = c.armorClass ?? '—';
+    
+    // Получаем модификаторы из API (или считаем fallback)
+    const mods = c.abilityModifiers || {};
+    const strMod = mods.Strength ?? 0;
+    const dexMod = mods.Dexterity ?? 0;
+    const conMod = mods.Constitution ?? 0;
+
+    return `
+        <div class="char-card" data-id="${UI.esc(c.id)}" role="button" tabindex="0">
+            <h3>${UI.esc(c.name)} ${isDead ? '💀' : ''}</h3>
+            <div class="small muted">Ур. ${level} · ${UI.esc(race)} ${UI.esc(className)}</div>
+            ${UI.hpBar(c.hitPoints ?? 0, c.maxHitPoints ?? 0)}
+            <div class="row small muted" style="margin-top:8px;gap:6px">
+                ${UI.pill('AC ' + armorClass)}
+                ${UI.pill('СИЛ ' + (strMod >= 0 ? '+' : '') + strMod)}
+                ${UI.pill('ЛОВ ' + (dexMod >= 0 ? '+' : '') + dexMod)}
+                ${UI.pill('ТЕЛ ' + (conMod >= 0 ? '+' : '') + conMod)}
+            </div>
+        </div>`;
+}
+```
+
+### 2.3. Автоматический расчёт бонусов навыков
+
+**Файл:** `wwwroot/js/views/sheet.js`
+
+**Вкладка «Навыки и спасброски»** — сейчас там просто список владений без итоговых бонусов. Добавить отображение:
+
+```javascript
+// Сопоставление навыков → характеристики (SRD 5e)
+const SKILL_ABILITIES = {
+    Acrobatics: 'Dexterity', AnimalHandling: 'Wisdom', Arcana: 'Intelligence',
+    Athletics: 'Strength', Deception: 'Charisma', History: 'Intelligence',
+    Insight: 'Wisdom', Intimidation: 'Charisma', Investigation: 'Intelligence',
+    Medicine: 'Wisdom', Nature: 'Intelligence', Perception: 'Wisdom',
+    Performance: 'Charisma', Persuasion: 'Charisma', Religion: 'Intelligence',
+    SleightOfHand: 'Dexterity', Stealth: 'Dexterity', Survival: 'Wisdom'
+};
+
+function getSkillTotal(skill) {
+    const ability = SKILL_ABILITIES[skill] || 'Strength';
+    const abilityMod = char.abilityModifiers?.[ability] ?? 0;
+    const profBonus = char.proficiencyBonus ?? 2;
+    const isProficient = Array.isArray(char.skillProficiencies) && char.skillProficiencies.includes(skill);
+    return abilityMod + (isProficient ? profBonus : 0);
+}
+
+// В drawSkills при рендере списка:
+${skillProf.map(s => {
+    const total = getSkillTotal(s);
+    const sign = total >= 0 ? '+' : '';
+    return `<span class="tag">${UI.esc(s)} <strong>${sign}${total}</strong><button data-action="rm-skill" data-name="${UI.esc(s)}">✕</button></span>`;
+}).join('') || '<span class="muted small">Нет владений</span>'}
+```
+
+Аналогично для спасбросков:
+
+```javascript
+function getSaveTotal(ability) {
+    const abilityMod = char.abilityModifiers?.[ability] ?? 0;
+    const profBonus = char.proficiencyBonus ?? 2;
+    const isProficient = Array.isArray(char.savingThrowProficiencies) && char.savingThrowProficiencies.includes(ability);
+    return abilityMod + (isProficient ? profBonus : 0);
+}
+```
+
+---
+
+## 3. БАЗА ДАННЫХ
+
+Изменения **не требуются**. `AbilityModifiers` — это **вычисляемое поле** (derived data), которое строится проекцией в памяти из событий `AbilityScoreSet`. В Event Sourcing нет необходимости хранить его отдельно — оно восстанавливается при ребилде проекции.
+
+Если в будущем появится SQL-реплика (read model в PostgreSQL), тогда добавить вычисляемый столбец:
+
+```sql
+ALTER TABLE character_read_models 
+ADD COLUMN ability_modifiers JSONB GENERATED ALWAYS AS (
+    jsonb_build_object(
+        'Strength', (ability_scores->>'Strength')::int / 2 - 5,
+        'Dexterity', (ability_scores->>'Dexterity')::int / 2 - 5,
+        -- ...
+    )
+) STORED;
+```
+
+---
+
+## 4. СТОРОННИЕ СЕРВИСЫ
+
+Изменения **не требуются**. Это чисто внутренняя доменная логика.
+
+---
+
+## Итоговый чек-лист для разработчика
+
+| Шаг | Файл | Действие |
+|-----|------|----------|
+| 1 | `character_dto.cs` | Добавить `Dictionary<string, int> AbilityModifiers` |
+| 2 | `character_projection.cs` | В `Apply(CharacterCreated)` инициализировать нулями. В `Apply(AbilityScoreSet)` пересчитывать через `ModifierCalculator.Calculate` |
+| 3 | `character_aggregate.cs` | (Опц.) Добавить вычисляемое свойство `AbilityModifiers` |
+| 4 | `characters.js` | В `cardHtml` добавить отображение СИЛ/ЛОВ/ТЕЛ модификаторов |
+| 5 | `sheet.js` | В `drawAbilities` использовать `char.abilityModifiers` вместо ручного `Math.floor` |
+| 6 | `sheet.js` | В `drawSkills` добавить `SKILL_ABILITIES` маппинг и отображать итоговый бонус каждого навыка |
+| 7 | `sheet.js` | В `drawSkills` аналогично отображать итоговый бонус спасбросков |
+
+После этих изменений игрок видит модификатор **сразу** при открытии листа персонажа, не считает в уме `(14-10)/2`, а DM видит ключевые модификаторы в списке персонажей без необходимости заходить в каждый лист.
